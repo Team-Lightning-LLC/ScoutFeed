@@ -24,18 +24,17 @@ class VertesiaAPI {
     return await response.json();
   }
 
-  async generateDigest(portfolio) {
-    const portfolioDocId = await this.uploadPortfolioAsDocument(portfolio);
+  // Generate digest by sending "begin" to Pulse
+  async generateDigest() {
+    console.log('Triggering Pulse interaction...');
     
-    const prompt = `take the stocks and give me a "news in the last 7 days compilation." Main key topics relevant to my portfolio and holdings and position that are highly pertinent for investors that like to feel like they know what is going on or are individual involved with the companies they choose, to give the feeling of agency and responsibility in their investments, as though they're doing their due diligence by looking at the bullet points that come up around the holdings in their portfolio related to the current state of the market. Remember that exposure percentage is important to understanding human perspective and interests. You'll be scouring the web but producing bullet points rather than complete write ups. Make sure you use the same diligence for deep research but concise it into hyper focused points. Each generation document will need a catchy or clean title that clearly expresses the research but also captures human curiosity. No emoji, no exaggeration, no sensationalism, no lies. Holdings: ${portfolioDocId}`;
-
     const response = await this.call('/execute/async', {
       method: 'POST',
       body: JSON.stringify({
         type: 'conversation',
         interaction: CONFIG.INTERACTION_NAME,
         data: {
-          Task: prompt
+          Task: 'begin'
         },
         config: {
           environment: CONFIG.ENVIRONMENT_ID,
@@ -47,46 +46,8 @@ class VertesiaAPI {
     return response;
   }
 
-  async uploadPortfolioAsDocument(portfolio) {
-    const holdingsText = portfolio.holdings
-      .sort((a, b) => b.exposure - a.exposure)
-      .map(h => `${h.ticker} — ${h.quantity} — $${h.dollarValue.toLocaleString()}`)
-      .join('\n');
-    
-    const portfolioContent = `Portfolio Holdings (Total: $${portfolio.totalValue.toLocaleString()})
-
-${holdingsText}
-
-Exposure Breakdown:
-${portfolio.holdings
-  .sort((a, b) => b.exposure - a.exposure)
-  .map(h => `${h.ticker}: ${h.exposure.toFixed(1)}%`)
-  .join('\n')}
-`;
-
-    const response = await this.call('/objects', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: `Portfolio_${Date.now()}`,
-        description: 'Portfolio holdings for news digest generation',
-        content: {
-          source: portfolioContent,
-          type: 'text/plain',
-          name: `Portfolio_${Date.now()}.txt`
-        },
-        properties: {
-          document_type: 'portfolio',
-          total_value: portfolio.totalValue,
-          holding_count: portfolio.holdings.length,
-          created_at: new Date().toISOString()
-        }
-      })
-    });
-
-    return response.id;
-  }
-
-  async fetchRecentDocuments(limit = 10) {
+  // Fetch recent documents
+  async fetchRecentDocuments(limit = 20) {
     const response = await this.call(`/objects?limit=${limit}&offset=0`);
     const documents = response.objects || [];
     
@@ -104,6 +65,22 @@ ${portfolio.holdings
     }));
   }
 
+  // Get most recent digest
+  async getLatestDigest() {
+    const documents = await this.fetchRecentDocuments();
+    
+    const digests = documents.filter(doc => 
+      doc.name && doc.name.startsWith('Digest:')
+    );
+    
+    if (digests.length === 0) {
+      return null;
+    }
+    
+    return digests[0];
+  }
+
+  // Get document content
   async getDocumentContent(documentId) {
     const doc = await this.call(`/objects/${documentId}`);
     
