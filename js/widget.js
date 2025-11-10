@@ -73,7 +73,8 @@ class PulseWidgetController {
     this.updateStatus('Generating...', false);
 
     try {
-      await vertesiaAPI.generateDigest();
+      // Use YOUR executeAsync method
+      await vertesiaAPI.executeAsync({ Task: 'begin' });
       
       console.log('Pulse generation started. Waiting 5 minutes...');
       
@@ -98,20 +99,63 @@ class PulseWidgetController {
     this.updateStatus('Loading...', false);
     
     try {
-      console.log('=== Starting digest load ===');
+      console.log('=== Loading all objects ===');
       
-      const latestDigest = await vertesiaAPI.getLatestDigest();
+      // Use YOUR loadAllObjects method
+      const response = await vertesiaAPI.loadAllObjects(1000);
+      const allDocuments = response.objects || [];
       
-      if (!latestDigest) {
-        console.warn('No digest found');
+      console.log(`Fetched ${allDocuments.length} total objects`);
+      
+      // Sort by creation date (newest first)
+      allDocuments.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('All document names:', allDocuments.map(d => d.name).slice(0, 20));
+      
+      // Filter for digests (Digest: or Scout Pulse:)
+      const digests = allDocuments.filter(doc => {
+        if (!doc.name) return false;
+        const name = doc.name.toLowerCase();
+        return name.includes('digest:') || name.includes('scout pulse:');
+      });
+      
+      console.log('Found digests:', digests.map(d => d.name));
+      
+      if (digests.length === 0) {
+        console.warn('No digest documents found');
         this.updateStatus('No digests yet', false);
         this.showEmptyState('No digests found. Click "Generate Digest" to create one.');
         return;
       }
       
-      console.log('Loading digest:', latestDigest.name);
+      // Get most recent digest
+      const latestDigest = digests[0];
+      console.log('Latest digest:', latestDigest.name, latestDigest.id);
       
-      const content = await vertesiaAPI.getDocumentContent(latestDigest.id);
+      // Get full object details
+      const digestObject = await vertesiaAPI.getObject(latestDigest.id);
+      
+      console.log('Digest object:', digestObject);
+      
+      // Extract content
+      let content;
+      if (digestObject.content && digestObject.content.source) {
+        // Check if it's a file reference
+        if (typeof digestObject.content.source === 'object' && digestObject.content.source.file) {
+          console.log('Digest is a file, downloading...');
+          content = await vertesiaAPI.getFileContent(digestObject.content.source.file);
+        } else {
+          // Direct text content
+          console.log('Digest has direct text content');
+          content = digestObject.content.source;
+        }
+      } else {
+        throw new Error('No content found in digest object');
+      }
       
       console.log('Content loaded, length:', content.length);
       console.log('First 500 chars:', content.substring(0, 500));
@@ -136,7 +180,7 @@ class PulseWidgetController {
       this.updateStatus('Active', true);
       
       // Update footer timestamp
-      const date = new Date(latestDigest.createdAt);
+      const date = new Date(latestDigest.created_at);
       const footer = document.querySelector('.widget-footer');
       let timestamp = footer.querySelector('.last-updated');
       if (!timestamp) {
@@ -187,7 +231,9 @@ class PulseWidgetController {
       'gev': 'GEV',
       'nuclear': 'NUCLEAR',
       'vti': 'VTI',
-      'vong': 'VONG'
+      'vong': 'VONG',
+      'ai infrastructure': 'AI',
+      'market dynamics': 'MARKET'
     };
     
     // Match sections: "TOPIC: Headline" followed by content
@@ -220,9 +266,9 @@ class PulseWidgetController {
       
       console.log(`  Ticker: ${ticker}`);
       
-      // Skip non-stock sections
-      if (!ticker || ticker === 'QUANTUM' || ticker === 'NUCLEAR') {
-        console.log(`  Skipping (not a stock section)`);
+      // Skip non-stock sections (but keep AI and MARKET for general context)
+      if (!ticker || ticker === 'QUANTUM' || ticker === 'NUCLEAR' || ticker === 'AI' || ticker === 'MARKET') {
+        console.log(`  Skipping (general section)`);
         continue;
       }
       
@@ -271,8 +317,12 @@ class PulseWidgetController {
         tickerItem.news.push(entry);
       }
       
-      // Add sources
-      tickerItem.sources.push(...sources);
+      // Add sources (dedupe)
+      sources.forEach(source => {
+        if (!tickerItem.sources.find(s => s.url === source.url)) {
+          tickerItem.sources.push(source);
+        }
+      });
     }
     
     console.log(`=== Parse complete: ${items.length} tickers, ${sectionCount} sections ===`);
@@ -287,7 +337,7 @@ class PulseWidgetController {
     const lower = headline.toLowerCase();
     
     // Considerations
-    if (lower.match(/concern|risk|unsustainable|warning|faces|challenge|collides|volatile|extreme|bubble|caution/)) {
+    if (lower.match(/concern|risk|unsustainable|warning|faces|challenge|collides|volatile|extreme|bubble|caution|test/)) {
       return 'considerations';
     }
     
