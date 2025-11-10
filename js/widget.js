@@ -85,7 +85,7 @@ class PulseWidgetController {
       
     } catch (error) {
       console.error('Failed to generate digest:', error);
-      alert('Failed to generate digest. Check console.');
+      alert(`Failed to generate digest: ${error.message}`);
       this.updateStatus('Error', false);
     } finally {
       this.isGenerating = false;
@@ -95,11 +95,17 @@ class PulseWidgetController {
   }
 
   async loadLatestDigest() {
+    this.updateStatus('Loading...', false);
+    
     try {
+      console.log('=== Starting digest load ===');
+      
       const latestDigest = await vertesiaAPI.getLatestDigest();
       
       if (!latestDigest) {
+        console.warn('No digest found');
         this.updateStatus('No digests yet', false);
+        this.showEmptyState('No digests found. Click "Generate Digest" to create one.');
         return;
       }
       
@@ -107,8 +113,20 @@ class PulseWidgetController {
       
       const content = await vertesiaAPI.getDocumentContent(latestDigest.id);
       
+      console.log('Content loaded, length:', content.length);
+      console.log('First 500 chars:', content.substring(0, 500));
+      
       // Parse Scout's format
       const parsed = this.parseScoutDigest(content);
+      
+      console.log('Parsed digest:', parsed);
+      
+      if (!parsed.items || parsed.items.length === 0) {
+        console.warn('No items parsed from digest');
+        this.showEmptyState('Digest loaded but no items found. Check console for details.');
+        this.updateStatus('No items', false);
+        return;
+      }
       
       // Store
       this.digest = parsed;
@@ -124,20 +142,37 @@ class PulseWidgetController {
       if (!timestamp) {
         timestamp = document.createElement('div');
         timestamp.className = 'last-updated';
+        timestamp.style.fontSize = '11px';
+        timestamp.style.color = 'var(--text-muted)';
         footer.appendChild(timestamp);
       }
       timestamp.textContent = `Updated ${this.getRelativeTime(date)}`;
       
+      console.log('=== Digest loaded successfully ===');
+      
     } catch (error) {
       console.error('Failed to load digest:', error);
       this.updateStatus('Error loading', false);
+      this.showEmptyState(`Error: ${error.message}`);
     }
   }
 
+  showEmptyState(message) {
+    const containers = ['newsList', 'considerationsList', 'opportunitiesList', 'sourcesList'];
+    containers.forEach(id => {
+      const container = document.getElementById(id);
+      if (container) {
+        container.innerHTML = `<div class="empty-state">${message}</div>`;
+      }
+    });
+  }
+
   parseScoutDigest(content) {
+    console.log('=== Starting parse ===');
+    
     const items = [];
     
-    // Extract ticker mapping from topic headers
+    // Ticker mapping
     const tickerMap = {
       'nvidia': 'NVDA',
       'nvda': 'NVDA',
@@ -159,8 +194,13 @@ class PulseWidgetController {
     const sectionRegex = /^([A-Z][^\n:]+):\s*([^\n]+)\n([\s\S]*?)(?=^[A-Z][^\n:]+:|$)/gm;
     
     let match;
+    let sectionCount = 0;
+    
     while ((match = sectionRegex.exec(content)) !== null) {
+      sectionCount++;
       const [, topic, headline, sectionContent] = match;
+      
+      console.log(`Section ${sectionCount}: "${topic}" - "${headline}"`);
       
       // Extract ticker
       const topicLower = topic.toLowerCase();
@@ -172,14 +212,19 @@ class PulseWidgetController {
         }
       }
       
-      // Try extracting from Market Context
+      // Try Market Context
       if (!ticker) {
         const contextMatch = sectionContent.match(/Market Context:.*?([A-Z]{2,5})/);
         if (contextMatch) ticker = contextMatch[1];
       }
       
+      console.log(`  Ticker: ${ticker}`);
+      
       // Skip non-stock sections
-      if (!ticker || ticker === 'QUANTUM' || ticker === 'NUCLEAR') continue;
+      if (!ticker || ticker === 'QUANTUM' || ticker === 'NUCLEAR') {
+        console.log(`  Skipping (not a stock section)`);
+        continue;
+      }
       
       // Extract exposure
       const exposureMatch = sectionContent.match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
@@ -191,11 +236,15 @@ class PulseWidgetController {
         .filter(line => line.trim().startsWith('•'))
         .map(line => line.trim().substring(1).trim());
       
-      // Categorize by headline
+      console.log(`  Bullets found: ${bullets.length}`);
+      
+      // Categorize
       const category = this.categorizeHeadline(headline);
+      console.log(`  Category: ${category}`);
       
       // Extract sources
       const sources = this.extractSources(sectionContent);
+      console.log(`  Sources found: ${sources.length}`);
       
       // Find or create ticker item
       let tickerItem = items.find(item => item.ticker === ticker);
@@ -226,6 +275,8 @@ class PulseWidgetController {
       tickerItem.sources.push(...sources);
     }
     
+    console.log(`=== Parse complete: ${items.length} tickers, ${sectionCount} sections ===`);
+    
     return {
       title: content.match(/Scout Pulse:\s*(.+)/)?.[1] || 'Portfolio Digest',
       items
@@ -240,7 +291,7 @@ class PulseWidgetController {
       return 'considerations';
     }
     
-    // Opportunities
+    // Opportunities  
     if (lower.match(/opportunity|power|dominance|renaissance|lead|momentum|strategic|explosive|record|growth/)) {
       return 'opportunities';
     }
@@ -285,7 +336,9 @@ class PulseWidgetController {
   renderDigest() {
     if (!this.digest) return;
 
-    // Flatten entries for each category
+    console.log('=== Rendering digest ===');
+
+    // Flatten entries
     const news = [];
     const considerations = [];
     const opportunities = [];
@@ -326,6 +379,8 @@ class PulseWidgetController {
         });
       }
     });
+
+    console.log(`Rendering: ${news.length} news, ${considerations.length} considerations, ${opportunities.length} opportunities, ${sources.length} sources`);
 
     this.renderHeadlines('newsList', news);
     this.renderHeadlines('considerationsList', considerations);
