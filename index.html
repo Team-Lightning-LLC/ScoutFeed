@@ -3,93 +3,113 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Portfolio Pulse - Automated News Monitoring</title>
-  <link rel="stylesheet" href="css/styles.css">
+  <title>Portfolio Pulse Widget</title>
+  <link rel="stylesheet" href="widget-styles.css">
 </head>
 <body>
-  <!-- Header -->
-  <div class="header">
-    <h1>Portfolio Pulse</h1>
-    <div class="subtitle">Autonomous Portfolio News Monitoring</div>
-  </div>
-
-  <!-- Main Container -->
-  <div class="container">
+  
+  <!-- Portfolio Pulse Widget -->
+  <div class="pulse-widget">
     
-    <!-- Left: Portfolio Setup -->
-    <aside class="left-panel">
-      <div class="panel-header">
-        <h2>Portfolio Setup</h2>
+    <!-- Widget Header -->
+    <div class="widget-header">
+      <div class="widget-title">Portfolio Pulse</div>
+      <button class="settings-btn" id="settingsBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m0 5.2l4.2 4.2M23 12h-6m-6 0H1m13.8-5.2l-4.2 4.2m0 5.2l-4.2 4.2"/>
+        </svg>
+      </button>
+    </div>
+    
+    <!-- Tab Navigation -->
+    <div class="widget-tabs">
+      <button class="tab-btn active" data-tab="news">News</button>
+      <button class="tab-btn" data-tab="considerations">Considerations</button>
+      <button class="tab-btn" data-tab="opportunities">Opportunities</button>
+      <button class="tab-btn" data-tab="sources">Sources</button>
+    </div>
+    
+    <!-- Tab Content -->
+    <div class="widget-content">
+      
+      <!-- News Tab -->
+      <div class="tab-panel active" id="news">
+        <div class="headline-list" id="newsList">
+          <div class="empty-state">No news items yet. Generate your first digest.</div>
+        </div>
       </div>
       
-      <div class="panel-body">
-        <!-- Portfolio Input -->
-        <div class="section">
-          <label for="portfolioInput">Enter Holdings (one per line: TICKER QUANTITY)</label>
-          <textarea 
-            id="portfolioInput" 
-            rows="8" 
-            placeholder="NVDA 77.067&#10;IONQ 150&#10;OKLO 20&#10;PLTR 60&#10;BCTI 75"
-          ></textarea>
-          <button id="savePortfolio" class="btn primary">Save Portfolio</button>
-        </div>
-
-        <!-- Current Portfolio Display -->
-        <div class="section">
-          <h3>Current Portfolio</h3>
-          <div id="portfolioDisplay" class="portfolio-display">
-            <p class="empty">No portfolio saved yet</p>
-          </div>
-        </div>
-
-        <!-- Manual Trigger for Testing -->
-        <div class="section">
-          <h3>Manual Testing</h3>
-          <button id="generateNow" class="btn secondary" disabled>Generate Digest Now</button>
-          <p class="helper-text">Test digest generation without waiting for timer</p>
+      <!-- Considerations Tab -->
+      <div class="tab-panel" id="considerations">
+        <div class="headline-list" id="considerationsList">
+          <div class="empty-state">No considerations yet.</div>
         </div>
       </div>
-    </aside>
-
-    <!-- Right: Timer Status & Digests -->
-    <main class="right-panel">
-      <div class="panel-header">
-        <h2>Digest Timeline</h2>
-        <div class="timer-controls">
-          <button id="toggleTimer" class="btn-toggle">
-            <span id="timerStatus">Auto-updates: OFF</span>
-          </button>
+      
+      <!-- Opportunities Tab -->
+      <div class="tab-panel" id="opportunities">
+        <div class="headline-list" id="opportunitiesList">
+          <div class="empty-state">No opportunities yet.</div>
         </div>
       </div>
-
-      <div class="panel-body">
-        <!-- Timer Status -->
-        <div class="timer-display" id="timerDisplay">
-          <div class="timer-icon">⏰</div>
-          <div class="timer-info">
-            <div class="timer-label">Next Update</div>
-            <div class="timer-countdown" id="timerCountdown">--:--:--</div>
-            <div class="timer-schedule">Scheduled: 8:00 AM • 2:00 PM • 8:00 PM (M-F)</div>
-          </div>
-        </div>
-
-        <!-- Digest List -->
-        <div class="digests-container">
-          <h3>Generated Digests</h3>
-          <div id="digestList" class="digest-list">
-            <p class="empty">No digests generated yet. Enable auto-updates or click "Generate Now" to start.</p>
-          </div>
+      
+      <!-- Sources Tab -->
+      <div class="tab-panel" id="sources">
+        <div class="sources-list" id="sourcesList">
+          <div class="empty-state">No sources yet.</div>
         </div>
       </div>
-    </main>
+      
+    </div>
+    
+    <!-- Widget Footer (Status) -->
+    <div class="widget-footer">
+      <div class="status-indicator">
+        <div class="status-dot"></div>
+        <span class="status-text">Ready</span>
+      </div>
+      <div class="last-updated" id="lastUpdated">Never updated</div>
+    </div>
+    
   </div>
 
-  <!-- Application Scripts -->
+  <!-- Settings Modal (Simple Dropdown) -->
+  <div class="settings-modal" id="settingsModal" style="display: none;">
+    <div class="settings-content">
+      <div class="settings-header">Settings</div>
+      
+      <div class="setting-item">
+        <label>Update Frequency</label>
+        <select id="frequency">
+          <option value="3x">3x Daily (8am, 2pm, 8pm)</option>
+          <option value="2x">2x Daily (9am, 5pm)</option>
+          <option value="1x">1x Daily (9am)</option>
+          <option value="manual">Manual Only</option>
+        </select>
+      </div>
+      
+      <div class="setting-item">
+        <label>Lookback Period</label>
+        <select id="lookback">
+          <option value="3">Last 3 days</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </div>
+      
+      <div class="settings-actions">
+        <button class="btn-cancel" id="cancelSettings">Cancel</button>
+        <button class="btn-save" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
   <script src="js/config.js"></script>
   <script src="js/vertesia-api.js"></script>
   <script src="js/portfolio.js"></script>
-  <script src="js/digest-engine.js"></script>
-  <script src="js/timeline.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/widget.js"></script>
 </body>
 </html>
