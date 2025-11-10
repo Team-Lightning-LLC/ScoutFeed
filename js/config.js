@@ -5,12 +5,6 @@ const CONFIG = {
   ENVIRONMENT_ID: '681915c6a01fb262a410c161',
   MODEL: 'claude-sonnet-4-20250514',
   
-  // Research Interaction
-  INTERACTION_NAME: 'ResearchV2',
-  
-  // News Settings
-  NEWS: {
-    LOOKBACK_DAYS: 7,
-    MIN_EXPOSURE_FOR_PRIORITY: 10
-  }
+  // Pulse Interaction
+  INTERACTION_NAME: 'Pulse'
 };
