@@ -226,6 +226,9 @@ body {
   margin-bottom: 6px;
   padding: 4px 0;
   transition: color 0.15s ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-link:hover {
@@ -312,7 +315,7 @@ body {
   background: white;
   border-radius: 12px;
   padding: 24px;
-  width: 400px;
+  width: 360px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
 
@@ -335,17 +338,6 @@ body {
   margin-bottom: 6px;
 }
 
-.setting-item textarea {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--widget-border);
-  border-radius: 6px;
-  font-size: 13px;
-  font-family: 'Courier New', monospace;
-  color: var(--text);
-  resize: vertical;
-}
-
 .setting-item select {
   width: 100%;
   padding: 8px 12px;
@@ -357,7 +349,6 @@ body {
   cursor: pointer;
 }
 
-.setting-item textarea:focus,
 .setting-item select:focus {
   outline: none;
   border-color: var(--accent);
