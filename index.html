@@ -31,7 +31,7 @@
       
       <div class="tab-panel active" id="news">
         <div class="headline-list" id="newsList">
-          <div class="empty-state">No news yet. Click "Generate Digest" to start.</div>
+          <div class="empty-state">Loading latest digest...</div>
         </div>
       </div>
       
@@ -70,11 +70,6 @@
       <div class="settings-header">Settings</div>
       
       <div class="setting-item">
-        <label>Portfolio (one per line: TICKER QUANTITY VALUE)</label>
-        <textarea id="portfolioInput" rows="6" placeholder="VONG 17.065 2057.70&#10;VTI 17.331 5666.06&#10;IONQ 150.000 12313.50"></textarea>
-      </div>
-      
-      <div class="setting-item">
         <label>Update Frequency</label>
         <select id="frequency">
           <option value="manual">Manual Only</option>
@@ -93,7 +88,6 @@
 
   <script src="js/config.js"></script>
   <script src="js/vertesia-api.js"></script>
-  <script src="js/portfolio.js"></script>
   <script src="js/widget.js"></script>
 </body>
 </html>
