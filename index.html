@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Portfolio Pulse</title>
+  <link rel="stylesheet" href="widget-styles.css">
+</head>
+<body>
+  
+  <div class="pulse-widget">
+    
+    <div class="widget-header">
+      <div class="widget-title">Portfolio Pulse</div>
+      <button class="settings-btn" id="settingsBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m0 5.2l4.2 4.2M23 12h-6m-6 0H1m13.8-5.2l-4.2 4.2m0 5.2l-4.2 4.2"/>
+        </svg>
+      </button>
+    </div>
+    
+    <div class="widget-tabs">
+      <button class="tab-btn active" data-tab="news">News</button>
+      <button class="tab-btn" data-tab="considerations">Considerations</button>
+      <button class="tab-btn" data-tab="opportunities">Opportunities</button>
+      <button class="tab-btn" data-tab="sources">Sources</button>
+    </div>
+    
+    <div class="widget-content">
+      
+      <div class="tab-panel active" id="news">
+        <div class="headline-list" id="newsList">
+          <div class="empty-state">No news yet. Click "Generate Digest" to start.</div>
+        </div>
+      </div>
+      
+      <div class="tab-panel" id="considerations">
+        <div class="headline-list" id="considerationsList">
+          <div class="empty-state">No considerations yet.</div>
+        </div>
+      </div>
+      
+      <div class="tab-panel" id="opportunities">
+        <div class="headline-list" id="opportunitiesList">
+          <div class="empty-state">No opportunities yet.</div>
+        </div>
+      </div>
+      
+      <div class="tab-panel" id="sources">
+        <div class="sources-list" id="sourcesList">
+          <div class="empty-state">No sources yet.</div>
+        </div>
+      </div>
+      
+    </div>
+    
+    <div class="widget-footer">
+      <div class="status-indicator">
+        <div class="status-dot"></div>
+        <span class="status-text">Ready</span>
+      </div>
+      <button class="generate-btn" id="generateBtn">Generate Digest</button>
+    </div>
+    
+  </div>
+
+  <div class="settings-modal" id="settingsModal" style="display: none;">
+    <div class="settings-content">
+      <div class="settings-header">Settings</div>
+      
+      <div class="setting-item">
+        <label>Portfolio (one per line: TICKER QUANTITY VALUE)</label>
+        <textarea id="portfolioInput" rows="6" placeholder="VONG 17.065 2057.70&#10;VTI 17.331 5666.06&#10;IONQ 150.000 12313.50"></textarea>
+      </div>
+      
+      <div class="setting-item">
+        <label>Update Frequency</label>
+        <select id="frequency">
+          <option value="manual">Manual Only</option>
+          <option value="1x">1x Daily (9am)</option>
+          <option value="2x">2x Daily (9am, 5pm)</option>
+          <option value="3x">3x Daily (8am, 2pm, 8pm)</option>
+        </select>
+      </div>
+      
+      <div class="settings-actions">
+        <button class="btn-cancel" id="cancelSettings">Cancel</button>
+        <button class="btn-save" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/vertesia-api.js"></script>
+  <script src="js/portfolio.js"></script>
+  <script src="js/widget.js"></script>
+</body>
+</html>
