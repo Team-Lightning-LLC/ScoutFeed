@@ -47,40 +47,70 @@ class VertesiaAPI {
   }
 
   // Load ALL documents from API (matching original app pattern)
-  async loadAllDocuments() {
+// Load all documents from API
+  async loadDocuments() {
     try {
       console.log('Loading all documents...');
-      
-      const response = await fetch(`${this.baseURL}/objects?limit=1000&offset=0`, {
+
+      const response = await fetch${CONFIG.VERTESIA_API_BASE}/objects?limit=1000&offset=0, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          'Authorization': Bearer ${CONFIG.VERTESIA_API_KEY},
           'Content-Type': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
-        throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+        throw new ErrorAPI call failed: ${response.status} ${response.statusText});
       }
-      
-      const data = await response.json();
-      const allObjects = data.objects || []; // ← KEY: response has .objects property
-      
-      console.log('Loaded objects:', allObjects.length);
-      
-      // Transform to standard format
-      const documents = allObjects.map(obj => ({
-        id: obj.id,
-        name: obj.name || 'Untitled',
-        createdAt: obj.created_at || new Date().toISOString(),
-        contentSource: obj.content?.source,
-        properties: obj.properties || {}
-      }));
-      
-      // Sort by creation date (newest first)
-      documents.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      
-      return documents;
+
+      const allObjects = await response.json();
+      console.log('Loaded all objects:', allObjects.length);
+
+      this.documents = [];
+      for (const obj of allObjects) {
+        try {
+          const transformed = this.transformDocument(obj);
+          this.documents.push(transformed);
+        } catch (error) {
+          console.error('Failed to transform:', obj.name, error);
+        }
+      }
+
+      this.documents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      console.log('Final documents array:', this.documents.length);
+
+    } catch (error) {
+      console.error('Failed to load documents:', error);
+      this.documents = [];
+    }
+  }
+  // Transform API object to document format
+  transformDocument(obj) {
+    let title = obj.name || 'Untitled';
+
+    const prefixes = ['DeepResearch_', 'Deep Research_', 'deep research_', 'DEEP RESEARCH_', 'DEEP RESEARCH:'];
+    prefixes.forEach(prefix => {
+      if (title.startsWith(prefix)) {
+        title = title.substring(prefix.length);
+      }
+    });
+
+    title = title.replace(/[_-]/g, ' ').trim();
+
+    return {
+      id: obj.id,
+      title: title,
+      area: obj.properties?.capability || 'Research',
+      topic: obj.properties?.framework || 'General',
+      created_at: obj.created_at || obj.properties?.generated_at || new Date().toISOString(),
+      content_source: obj.content?.source,
+      when: this.formatDate(obj.created_at || obj.properties?.generated_at),
+      modifiers: obj.properties?.modifiers || null,
+      parent_document_id: obj.properties?.parent_document_id || null
+    };
+  }
       
     } catch (error) {
       console.error('Failed to load documents:', error);
