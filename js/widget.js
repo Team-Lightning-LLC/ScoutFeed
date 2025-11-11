@@ -88,7 +88,8 @@ class PulseWidget {
       const digestObj = objects.find(o => (o.name || '').toLowerCase().includes('digest'));
       if (!digestObj) return this.showEmpty('No digest found');
 
-      const object = digestObj;
+  const object = await vertesiaAPI.getObject(digestObj.id);
+
       const src = object?.content?.source || object?.content || object?.source;
       if (!src) return this.showEmpty('No digest content found');
 
