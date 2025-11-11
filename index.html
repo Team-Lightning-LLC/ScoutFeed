@@ -8,17 +8,25 @@
 </head>
 <body>
   
-  <div class="pulse-widget">
-    
-    <div class="widget-header">
-      <div class="widget-title">Portfolio Pulse</div>
-      <button class="settings-btn" id="settingsBtn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m0 5.2l4.2 4.2M23 12h-6m-6 0H1m13.8-5.2l-4.2 4.2m0 5.2l-4.2 4.2"/>
-        </svg>
-      </button>
+<div class="pulse-widget">
+  <div class="widget-header">
+    <div class="widget-title">Portfolio Pulse : <span class="date-display">MM/DD/YYYY</span></div>
+    <button class="settings-btn">⚙️</button>
+  </div>
+
+  <div class="section-header">Articles For You</div>
+
+  <div class="widget-content" id="newsList"></div>
+
+  <div class="widget-footer">
+    <div class="status-indicator">
+      <span class="status-dot"></span>
+      <span class="status-text">Active</span>
     </div>
+    <button id="generateBtn" class="generate-btn">Generate Digest</button>
+  </div>
+</div>
+
     
 <!-- Tabs (News only) -->
 <div class="widget-tabs">
