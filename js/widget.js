@@ -1,12 +1,14 @@
+// widget.js — Portfolio Pulse (drop-in replacement)
+
 class PulseWidgetController {
   constructor() {
     this.currentTab = 'news';
     this.digest = null;
     this.isGenerating = false;
-    
     this.init();
   }
 
+  /* ---------------------- lifecycle ---------------------- */
   init() {
     this.setupEventListeners();
     this.loadLatestDigest();
@@ -14,140 +16,74 @@ class PulseWidgetController {
   }
 
   setupEventListeners() {
-    // Tab switching
+    // Tabs
     document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.switchTab(btn.dataset.tab);
-      });
+      btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
-    // Settings
-    const settingsBtn = document.getElementById('settingsBtn');
-    const settingsModal = document.getElementById('settingsModal');
-    const cancelBtn = document.getElementById('cancelSettings');
-    const saveBtn = document.getElementById('saveSettings');
-    const generateBtn = document.getElementById('generateBtn');
+    // Settings + actions
+    const settingsBtn  = document.getElementById('settingsBtn');
+    const settingsModal= document.getElementById('settingsModal');
+    const cancelBtn    = document.getElementById('cancelSettings');
+    const saveBtn      = document.getElementById('saveSettings');
+    const generateBtn  = document.getElementById('generateBtn');
 
-    settingsBtn?.addEventListener('click', () => {
-      settingsModal.style.display = 'flex';
-    });
-
-    cancelBtn?.addEventListener('click', () => {
-      settingsModal.style.display = 'none';
-    });
-
-    saveBtn?.addEventListener('click', () => {
-      settingsModal.style.display = 'none';
-      this.updateStatus('Settings saved', true);
-    });
-
-    generateBtn?.addEventListener('click', () => {
-      this.generateDigest();
-    });
+    settingsBtn?.addEventListener('click', () => { settingsModal.style.display = 'flex'; });
+    cancelBtn?.addEventListener('click', () => { settingsModal.style.display = 'none'; });
+    saveBtn  ?.addEventListener('click', () => { settingsModal.style.display = 'none'; this.updateStatus('Settings saved', true); });
+    generateBtn?.addEventListener('click', () => this.generateDigest());
 
     settingsModal?.addEventListener('click', (e) => {
-      if (e.target === settingsModal) {
-        settingsModal.style.display = 'none';
-      }
+      if (e.target === settingsModal) settingsModal.style.display = 'none';
     });
 
-    // Headline expansion
+    // Expand/collapse headlines
     document.addEventListener('click', (e) => {
       const header = e.target.closest('.headline-header');
-      if (header) {
-        const item = header.closest('.headline-item');
-        if (item) {
-          item.classList.toggle('expanded');
-        }
-      }
+      if (!header) return;
+      const item = header.closest('.headline-item');
+      if (item) item.classList.toggle('expanded');
     });
   }
 
+  /* ---------------------- actions ---------------------- */
   async generateDigest() {
     if (this.isGenerating) return;
 
     this.isGenerating = true;
-    const generateBtn = document.getElementById('generateBtn');
-    generateBtn.disabled = true;
-    generateBtn.textContent = 'Generating...';
+    const btn = document.getElementById('generateBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
     this.updateStatus('Generating...', false);
 
     try {
-      // Use YOUR executeAsync method
-      await vertesiaAPI.executeAsync({ Task: 'begin' });
-      
+      await vertesiaAPI.executeAsync({ Task: 'begin' }); // background run
       console.log('Pulse generation started. Waiting 5 minutes...');
-      
-      // Wait 5 minutes
-      await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000));
-      
-      // Load latest
+      await new Promise(res => setTimeout(res, 5 * 60 * 1000)); // 5 min
       await this.loadLatestDigest();
-      
-    } catch (error) {
-      console.error('Failed to generate digest:', error);
-      alert(`Failed to generate digest: ${error.message}`);
+    } catch (err) {
+      console.error('Failed to generate digest:', err);
+      alert(`Failed to generate digest: ${err.message}`);
       this.updateStatus('Error', false);
     } finally {
       this.isGenerating = false;
-      generateBtn.disabled = false;
-      generateBtn.textContent = 'Generate Digest';
+      if (btn) { btn.disabled = false; btn.textContent = 'Generate Digest'; }
     }
   }
-      // Use YOUR loadAllObjects method
-      const response = await vertesiaAPI.loadAllObjects(1000);
-      const allDocuments = response.objects || [];
-      
-      console.log(`Fetched ${allDocuments.length} total objects`);
-      
-      // Sort by creation date (newest first)
-      allDocuments.sort((a, b) => {
-        const dateA = new Date(a.created_at || 0);
-        const dateB = new Date(b.created_at || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('All document names:', allDocuments.map(d => d.name).slice(0, 20));
-      
-      // Filter for digests (Digest: or Scout Pulse:)
-      const digests = allDocuments.filter(doc => {
-        if (!doc.name) return false;
-        const name = doc.name.toLowerCase();
-        return name.includes('digest:') || name.includes('scout pulse:');
-      });
-      
-      console.log('Found digests:', digests.map(d => d.name));
-      
-      if (digests.length === 0) {
-        console.warn('No digest documents found');
-        this.updateStatus('No digests yet', false);
-        this.showEmptyState('No digests found. Click "Generate Digest" to create one.');
-        return;
-      }
-      
-      // Get most recent digest
-      const latestDigest = digests[0];
-      console.log('Latest digest:', latestDigest.name, latestDigest.id);
-      
-      // Get full object details
-      const digestObject = await vertesiaAPI.getObject(latestDigest.id);
-      
-      console.log('Digest object:', digestObject);
-      
-// ...everything above unchanged...
 
+  /* ---------------------- data load ---------------------- */
   async loadLatestDigest() {
     this.updateStatus('Loading...', false);
 
     try {
       console.log('=== Loading all objects ===');
-
       const response = await vertesiaAPI.loadAllObjects(1000);
       const allDocuments = response.objects || [];
-      allDocuments.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
 
-      console.log('All document names:', allDocuments.map(d => d.name).slice(0,20));
+      // newest first
+      allDocuments.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      console.log('All document names:', allDocuments.map(d => d.name).slice(0, 20));
 
+      // choose digests by name
       const digests = allDocuments.filter(doc => {
         const n = (doc.name || '').toLowerCase();
         return n.includes('digest:') || n.includes('scout pulse:');
@@ -166,24 +102,24 @@ class PulseWidgetController {
       const digestObject = await vertesiaAPI.getObject(latestDigest.id);
       console.log('Digest object:', digestObject);
 
-      // -------- FIXED: robust content extraction --------
+      // -------- robust content extraction --------
       let content;
-      if (digestObject.content && digestObject.content.source != null) {
-        const src = digestObject.content.source;
-        if (typeof src === 'string') {
-          // inline text
-          content = src;
-        } else {
-          // stored file: support {file}|{store}|{path}|{key}
-          console.log('Digest is a file, downloading...');
-          const fileRef = src.file || src.store || src.path || src.key;
-          if (!fileRef) throw new Error('Unknown file reference shape in content.source');
-          content = await vertesiaAPI.getFileContent(fileRef);
-        }
-      } else {
+      if (!digestObject.content || digestObject.content.source == null) {
         throw new Error('No content found in digest object');
       }
-      // --------------------------------------------------
+      const src = digestObject.content.source;
+
+      if (typeof src === 'string') {
+        // inline text content
+        content = src;
+      } else {
+        // stored file: accept {file}|{store}|{path}|{key}
+        console.log('Digest is a file, downloading...');
+        const fileRef = src.file || src.store || src.path || src.key;
+        if (!fileRef) throw new Error('Unknown file reference shape in content.source');
+        content = await vertesiaAPI.getFileContent(fileRef);
+      }
+      // ------------------------------------------
 
       console.log('Content loaded, length:', content.length);
       console.log('First 500 chars:', content.substring(0, 500));
@@ -201,17 +137,18 @@ class PulseWidgetController {
       this.renderDigest();
       this.updateStatus('Active', true);
 
+      // footer timestamp
       const date = new Date(latestDigest.created_at);
       const footer = document.querySelector('.widget-footer');
-      let timestamp = footer.querySelector('.last-updated');
-      if (!timestamp) {
-        timestamp = document.createElement('div');
-        timestamp.className = 'last-updated';
-        timestamp.style.fontSize = '11px';
-        timestamp.style.color = 'var(--text-muted)';
-        footer.appendChild(timestamp);
+      let ts = footer?.querySelector('.last-updated');
+      if (!ts && footer) {
+        ts = document.createElement('div');
+        ts.className = 'last-updated';
+        ts.style.fontSize = '11px';
+        ts.style.color = 'var(--text-muted)';
+        footer.appendChild(ts);
       }
-      timestamp.textContent = `Updated ${this.getRelativeTime(date)}`;
+      if (ts) ts.textContent = `Updated ${this.getRelativeTime(date)}`;
 
       console.log('=== Digest loaded successfully ===');
     } catch (error) {
@@ -221,141 +158,88 @@ class PulseWidgetController {
     }
   }
 
-      console.log('=== Digest loaded successfully ===');
-      
-    } catch (error) {
-      console.error('Failed to load digest:', error);
-      this.updateStatus('Error loading', false);
-      this.showEmptyState(`Error: ${error.message}`);
-    }
-  }
-
+  /* ---------------------- parse/render ---------------------- */
   showEmptyState(message) {
-    const containers = ['newsList', 'considerationsList', 'opportunitiesList', 'sourcesList'];
-    containers.forEach(id => {
-      const container = document.getElementById(id);
-      if (container) {
-        container.innerHTML = `<div class="empty-state">${message}</div>`;
-      }
+    ['newsList', 'considerationsList', 'opportunitiesList', 'sourcesList'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="empty-state">${message}</div>`;
     });
   }
 
   parseScoutDigest(content) {
     console.log('=== Starting parse ===');
-    
     const items = [];
-    
-    // Ticker mapping
+
     const tickerMap = {
-      'nvidia': 'NVDA',
-      'nvda': 'NVDA',
-      'ionq': 'IONQ',
-      'rigetti': 'RGTI',
-      'rgti': 'RGTI',
-      'quantum computing': 'QUANTUM',
-      'palantir': 'PLTR',
-      'pltr': 'PLTR',
-      'oklo': 'OKLO',
-      'ge vernova': 'GEV',
-      'gev': 'GEV',
-      'nuclear': 'NUCLEAR',
-      'vti': 'VTI',
-      'vong': 'VONG',
-      'ai infrastructure': 'AI',
-      'market dynamics': 'MARKET'
+      'nvidia': 'NVDA','nvda':'NVDA',
+      'ionq':'IONQ',
+      'rigetti':'RGTI','rgti':'RGTI',
+      'quantum computing':'QUANTUM',
+      'palantir':'PLTR','pltr':'PLTR',
+      'oklo':'OKLO',
+      'ge vernova':'GEV','gev':'GEV',
+      'nuclear':'NUCLEAR',
+      'vti':'VTI','vong':'VONG',
+      'ai infrastructure':'AI',
+      'market dynamics':'MARKET'
     };
-    
-    // Match sections: "TOPIC: Headline" followed by content
+
+    // "TOPIC: Headline" followed by section body (greedy until next TOPIC or end)
     const sectionRegex = /^([A-Z][^\n:]+):\s*([^\n]+)\n([\s\S]*?)(?=^[A-Z][^\n:]+:|$)/gm;
-    
-    let match;
-    let sectionCount = 0;
-    
+
+    let match, sectionCount = 0;
     while ((match = sectionRegex.exec(content)) !== null) {
       sectionCount++;
-      const [, topic, headline, sectionContent] = match;
-      
-      console.log(`Section ${sectionCount}: "${topic}" - "${headline}"`);
-      
-      // Extract ticker
+      const [, topic, headline, section] = match;
       const topicLower = topic.toLowerCase();
+
+      // map to ticker
       let ticker = null;
-      for (const [key, value] of Object.entries(tickerMap)) {
-        if (topicLower.includes(key)) {
-          ticker = value;
-          break;
-        }
+      for (const [k, v] of Object.entries(tickerMap)) {
+        if (topicLower.includes(k)) { ticker = v; break; }
       }
-      
-      // Try Market Context
       if (!ticker) {
-        const contextMatch = sectionContent.match(/Market Context:.*?([A-Z]{2,5})/);
-        if (contextMatch) ticker = contextMatch[1];
+        const m = section.match(/Market Context:.*?([A-Z]{2,5})/);
+        if (m) ticker = m[1];
       }
-      
-      console.log(`  Ticker: ${ticker}`);
-      
-      // Skip non-stock sections (but keep AI and MARKET for general context)
-      if (!ticker || ticker === 'QUANTUM' || ticker === 'NUCLEAR' || ticker === 'AI' || ticker === 'MARKET') {
-        console.log(`  Skipping (general section)`);
-        continue;
-      }
-      
-      // Extract exposure
-      const exposureMatch = sectionContent.match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
+      console.log(`Section ${sectionCount}: "${topic}" — "${headline}" → ${ticker}`);
+
+      // skip broad sections but keep AI/MARKET out
+      if (!ticker || ['QUANTUM','NUCLEAR','AI','MARKET'].includes(ticker)) continue;
+
+      // exposure
+      const exposureMatch = section.match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
       const exposure = exposureMatch ? parseFloat(exposureMatch[1]) : 0;
-      
-      // Extract bullets
-      const bullets = sectionContent
+
+      // bullets (• lines)
+      const bullets = section
         .split('\n')
-        .filter(line => line.trim().startsWith('•'))
-        .map(line => line.trim().substring(1).trim());
-      
-      console.log(`  Bullets found: ${bullets.length}`);
-      
-      // Categorize
+        .filter(l => l.trim().startsWith('•'))
+        .map(l => l.trim().slice(1).trim());
+
+      // categorize
       const category = this.categorizeHeadline(headline);
-      console.log(`  Category: ${category}`);
-      
-      // Extract sources
-      const sources = this.extractSources(sectionContent);
-      console.log(`  Sources found: ${sources.length}`);
-      
-      // Find or create ticker item
-      let tickerItem = items.find(item => item.ticker === ticker);
-      if (!tickerItem) {
-        tickerItem = {
-          ticker,
-          name: topic.split(':')[0].trim(),
-          exposure,
-          news: [],
-          considerations: [],
-          opportunities: [],
-          sources: []
-        };
-        items.push(tickerItem);
+
+      // sources
+      const sources = this.extractSources(section);
+
+      // upsert ticker item
+      let item = items.find(i => i.ticker === ticker);
+      if (!item) {
+        item = { ticker, name: topic.split(':')[0].trim(), exposure, news: [], considerations: [], opportunities: [], sources: [] };
+        items.push(item);
       }
-      
-      // Add to category
+
       const entry = { headline, bullets };
-      if (category === 'considerations') {
-        tickerItem.considerations.push(entry);
-      } else if (category === 'opportunities') {
-        tickerItem.opportunities.push(entry);
-      } else {
-        tickerItem.news.push(entry);
-      }
-      
-      // Add sources (dedupe)
-      sources.forEach(source => {
-        if (!tickerItem.sources.find(s => s.url === source.url)) {
-          tickerItem.sources.push(source);
-        }
-      });
+      if (category === 'considerations') item.considerations.push(entry);
+      else if (category === 'opportunities') item.opportunities.push(entry);
+      else item.news.push(entry);
+
+      // add sources (dedupe by URL)
+      sources.forEach(s => { if (!item.sources.find(x => x.url === s.url)) item.sources.push(s); });
     }
-    
+
     console.log(`=== Parse complete: ${items.length} tickers, ${sectionCount} sections ===`);
-    
     return {
       title: content.match(/Scout Pulse:\s*(.+)/)?.[1] || 'Portfolio Digest',
       items
@@ -364,102 +248,50 @@ class PulseWidgetController {
 
   categorizeHeadline(headline) {
     const lower = headline.toLowerCase();
-    
-    // Considerations
-    if (lower.match(/concern|risk|unsustainable|warning|faces|challenge|collides|volatile|extreme|bubble|caution|test/)) {
-      return 'considerations';
-    }
-    
-    // Opportunities  
-    if (lower.match(/opportunity|power|dominance|renaissance|lead|momentum|strategic|explosive|record|growth/)) {
-      return 'opportunities';
-    }
-    
+    if (lower.match(/concern|risk|unsustainable|warning|faces|challenge|collides|volatile|extreme|bubble|caution|test/)) return 'considerations';
+    if (lower.match(/opportunity|power|dominance|renaissance|lead|momentum|strategic|explosive|record|growth/)) return 'opportunities';
     return 'news';
   }
 
   extractSources(content) {
-    const sources = [];
-    const citationsMatch = content.match(/Citations?:\s*([\s\S]*?)(?=^[A-Z][^\n:]+:|$)/m);
-    
-    if (!citationsMatch) return sources;
-    
-    const lines = citationsMatch[1].split('\n').filter(l => l.trim());
-    
-    lines.forEach(line => {
+    const out = [];
+    const block = content.match(/Citations?:\s*([\s\S]*?)(?=^[A-Z][^\n:]+:|$)/m);
+    if (!block) return out;
+
+    block[1].split('\n').filter(l => l.trim()).forEach(line => {
       const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
       if (urlMatch) {
-        const title = line.split(urlMatch[0])[0].trim().replace(/^["\s]+|["\s]+$/g, '');
-        sources.push({ 
-          title: title || 'Source', 
-          url: urlMatch[1] 
-        });
+        const url = urlMatch[1];
+        const title = line.split(url)[0].trim().replace(/^["\s]+|["\s]+$/g, '') || 'Source';
+        out.push({ title, url });
       }
     });
-    
-    return sources;
-  }
+    return out;
+    }
 
+  /* ---------------------- UI ---------------------- */
   switchTab(tabName) {
     this.currentTab = tabName;
-
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tabName);
-    });
-
-    document.querySelectorAll('.tab-panel').forEach(panel => {
-      panel.classList.toggle('active', panel.id === tabName);
-    });
+    document.querySelectorAll('.tab-btn').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.tab === tabName)
+    );
+    document.querySelectorAll('.tab-panel').forEach(panel =>
+      panel.classList.toggle('active', panel.id === tabName)
+    );
   }
 
   renderDigest() {
     if (!this.digest) return;
-
     console.log('=== Rendering digest ===');
 
-    // Flatten entries
-    const news = [];
-    const considerations = [];
-    const opportunities = [];
-    const sources = [];
-    
-    this.digest.items.forEach(item => {
-      item.news.forEach(entry => {
-        news.push({
-          ticker: item.ticker,
-          headline: entry.headline,
-          bullets: entry.bullets,
-          exposure: item.exposure
-        });
-      });
-      
-      item.considerations.forEach(entry => {
-        considerations.push({
-          ticker: item.ticker,
-          headline: entry.headline,
-          bullets: entry.bullets,
-          exposure: item.exposure
-        });
-      });
-      
-      item.opportunities.forEach(entry => {
-        opportunities.push({
-          ticker: item.ticker,
-          headline: entry.headline,
-          bullets: entry.bullets,
-          exposure: item.exposure
-        });
-      });
-      
-      if (item.sources.length > 0) {
-        sources.push({
-          ticker: item.ticker,
-          links: item.sources
-        });
-      }
-    });
+    const news = [], considerations = [], opportunities = [], sources = [];
 
-    console.log(`Rendering: ${news.length} news, ${considerations.length} considerations, ${opportunities.length} opportunities, ${sources.length} sources`);
+    this.digest.items.forEach(item => {
+      item.news.forEach(e => news.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
+      item.considerations.forEach(e => considerations.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
+      item.opportunities.forEach(e => opportunities.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
+      if (item.sources.length) sources.push({ ticker: item.ticker, links: item.sources });
+    });
 
     this.renderHeadlines('newsList', news);
     this.renderHeadlines('considerationsList', considerations);
@@ -467,82 +299,67 @@ class PulseWidgetController {
     this.renderSources('sourcesList', sources);
   }
 
-  renderHeadlines(containerId, headlines) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
+  renderHeadlines(containerId, list) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (!list.length) { el.innerHTML = '<div class="empty-state">No items in this category</div>'; return; }
 
-    if (headlines.length === 0) {
-      container.innerHTML = '<div class="empty-state">No items in this category</div>';
-      return;
-    }
-
-    container.innerHTML = headlines.map((item, index) => `
-      <div class="headline-item" data-index="${index}">
+    el.innerHTML = list.map((item, idx) => `
+      <div class="headline-item" data-index="${idx}">
         <div class="headline-header">
           <div class="headline-text">${item.ticker}: ${item.headline}</div>
           <div class="headline-toggle">▼</div>
         </div>
         <div class="headline-details">
           <div class="headline-ticker">${item.ticker} • ${item.exposure.toFixed(1)}% exposure</div>
-          ${item.bullets && item.bullets.length > 0 ? `
+          ${item.bullets?.length ? `
             <ul class="headline-bullets">
-              ${item.bullets.slice(0, 5).map(bullet => `<li>${bullet}</li>`).join('')}
-            </ul>
-          ` : ''}
+              ${item.bullets.slice(0, 5).map(b => `<li>${b}</li>`).join('')}
+            </ul>` : ''
+          }
         </div>
       </div>
     `).join('');
   }
 
-  renderSources(containerId, sourcesData) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
+  renderSources(containerId, groups) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (!groups.length) { el.innerHTML = '<div class="empty-state">No sources available</div>'; return; }
 
-    if (sourcesData.length === 0) {
-      container.innerHTML = '<div class="empty-state">No sources available</div>';
-      return;
-    }
-
-    container.innerHTML = sourcesData.map(group => `
+    el.innerHTML = groups.map(g => `
       <div class="source-group">
-        <div class="source-ticker">${group.ticker}</div>
-        ${group.links.slice(0, 5).map(link => `
+        <div class="source-ticker">${g.ticker}</div>
+        ${g.links.slice(0, 5).map(link => `
           <a href="${link.url}" target="_blank" rel="noopener noreferrer" class="source-link" title="${link.title}">
             ${link.title}
-          </a>
-        `).join('')}
+          </a>`).join('')}
       </div>
     `).join('');
   }
 
+  /* ---------------------- utils ---------------------- */
   updateStatus(text, isActive) {
-    const statusDot = document.querySelector('.status-dot');
-    const statusText = document.querySelector('.status-text');
-    
-    if (statusText) statusText.textContent = text;
-    if (statusDot) {
-      statusDot.style.background = isActive ? 'var(--success)' : '#9ca3af';
-    }
+    const dot = document.querySelector('.status-dot');
+    const t = document.querySelector('.status-text');
+    if (t) t.textContent = text;
+    if (dot) dot.style.background = isActive ? 'var(--success)' : '#9ca3af';
   }
 
   getRelativeTime(date) {
     const now = new Date();
     const diff = now - date;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
+    const m = Math.floor(diff / 60000);
+    const h = Math.floor(m / 60);
+    const d = Math.floor(h / 24);
+    if (m < 60) return `${m}m ago`;
+    if (h < 24) return `${h}h ago`;
+    return `${d}d ago`;
   }
 }
 
+/* bootstrap */
 document.addEventListener('DOMContentLoaded', () => {
   window.pulseWidget = new PulseWidgetController();
-  
-  // Auto-refresh every 30 seconds
-  setInterval(() => {
-    window.pulseWidget.loadLatestDigest();
-  }, 30000);
+  setInterval(() => window.pulseWidget.loadLatestDigest(), 30000); // auto-refresh
 });
