@@ -1,9 +1,9 @@
-// widget.js — Portfolio Pulse (robust, newest "digest" discovery, PDF/MD aware)
+// widget.js — Portfolio Pulse (section-based cards, newest “digest”, PDF/MD aware)
 
 class PulseWidgetController {
   constructor() {
     this.currentTab = 'news';
-    this.digest = null;
+    this.digest = null;      // { title, cards: [{title, bullets[], sources[], category, tag}] }
     this.isGenerating = false;
     this.init();
   }
@@ -12,7 +12,7 @@ class PulseWidgetController {
   init() {
     this.setupEventListeners();
     this.loadLatestDigest();
-    // auto-refresh
+    // auto-refresh every 30s
     setInterval(() => this.loadLatestDigest(), 30_000);
   }
 
@@ -76,11 +76,11 @@ class PulseWidgetController {
     try {
       const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
 
-      // newest first
+      // newest first by updated_at, then created_at
       objects.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
 
-      // === Digest discovery (simple + strict) ===
-      // If it has the word "digest" anywhere in name OR properties.title → it's a candidate
+      // === Digest discovery ===
+      // "If it has 'digest', it's in" — search name OR properties.title (case-insensitive)
       const candidates = objects.filter(o => {
         const hay = `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase();
         return hay.includes('digest');
@@ -121,7 +121,7 @@ class PulseWidgetController {
 
       const parsed = this.parseDigest(content);
 
-      if (!parsed.items?.length) {
+      if (!parsed.cards?.length) {
         this.showEmptyState('Digest loaded but no items found. Check formatting.');
         this.updateStatus('No items', false);
         return;
@@ -151,12 +151,11 @@ class PulseWidgetController {
 
   // Download text from a storage ref, auto-detecting PDFs/markdown
   async _downloadTextSmart(fileRef) {
-    // Try download-url endpoint first (preferred)
+    // Prefer API helper if available
     let urlData = null;
     if (typeof vertesiaAPI.getDownloadUrl === 'function') {
       urlData = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
     } else {
-      // direct call if helper not present
       const resp = await fetch(`${CONFIG.VERTESIA_BASE_URL}/objects/download-url`, {
         method: 'POST',
         headers: {
@@ -234,22 +233,20 @@ class PulseWidgetController {
 
   /* ===================== PARSING ===================== */
   parseDigest(raw) {
-    const text = this._normalizeText(raw);
-
-    // Title (best-effort)
-    const title =
-      (text.match(/^\s*(?:Scout Pulse|Portfolio Digest|Digest)\s*:\s*([^\n]+)$/mi)?.[1] ||
-       text.match(/^\s*Title\s*:\s*([^\n]+)$/mi)?.[1] || 'Portfolio Digest').trim();
-
+    const text  = this._normalizeText(raw);
     const lines = text.split('\n');
 
-    // Find headers: markdown headers OR headline followed by bullets soon after
+    // --- find section headers (no ticker dependency) ---
     const headerIdx = [];
     for (let i = 0; i < lines.length; i++) {
       const L = lines[i].trim();
       if (!L) continue;
-      if (/^#{1,3}\s+/.test(L)) { headerIdx.push(i); continue; }
-      if (this._isBulletLine(L) || /^sources?\s*:$/i.test(L)) continue;
+      const plain = L.replace(/\*/g, '').trim();
+      if (/^sources?\s*:?\s*$/i.test(plain)) continue;          // never treat Sources as header
+      if (/^#{1,3}\s+/.test(L)) { headerIdx.push(i); continue; } // markdown headers
+      if (this._isBulletLine(L)) continue;
+
+      // headline followed by bullets
       let bulletAhead = false, seen = 0;
       for (let k = 1; k <= 8 && i + k < lines.length; k++) {
         const t = lines[i + k].trim();
@@ -259,61 +256,66 @@ class PulseWidgetController {
       }
       if (bulletAhead) headerIdx.push(i);
     }
-
     if (headerIdx.length === 0) {
       for (let i = 0; i < lines.length; i++) {
         if (/^[A-Z][^:]{2,80}:\s*[^\n]+$/.test(lines[i])) headerIdx.push(i);
       }
     }
 
-    // Fallback: chunk by blank lines if still empty
-    if (headerIdx.length === 0) {
-      const chunks = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
-      const items = [];
-      for (const ch of chunks) {
-        const firstLine = ch.split('\n')[0] || 'Update';
-        const bullets = this._extractBullets(ch);
-        const ticker = this._inferTicker(firstLine, ch) || this._inferTicker(ch, ch);
-        if (!bullets.length || !ticker || ['QUANTUM','NUCLEAR','AI','MARKET'].includes(ticker)) continue;
-        const exposure = this._extractExposure(ch);
-        const category = this._categorize(firstLine);
-        let t = items.find(i => i.ticker === ticker);
-        if (!t) t = items[items.push({ ticker, name: firstLine, exposure, news: [], considerations: [], opportunities: [], sources: [] })-1];
-        const entry = { headline: firstLine, bullets };
-        if (category === 'considerations') t.considerations.push(entry); else if (category === 'opportunities') t.opportunities.push(entry); else t.news.push(entry);
-      }
-      return { title, items };
-    }
-
+    // --- carve sections ---
     const sections = [];
     for (let h = 0; h < headerIdx.length; h++) {
       const start = headerIdx[h];
-      const end = (h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length);
-      let headline = lines[start].replace(/^#{1,3}\s+/, '').trim();
-      let topic = headline;
-      const m = headline.match(/^([^:]{2,80}):\s*(.+)$/);
-      if (m) { topic = m[1].trim(); headline = m[2].trim(); }
+      const end   = (h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length);
+
+      // title = header line (strip markdown ### and optional TOPIC: prefix)
+      let title = lines[start].replace(/^#{1,3}\s+/, '').trim();
+      const m = title.match(/^([^:]{2,80}):\s*(.+)$/);
+      if (m) title = `${m[1].trim()}: ${m[2].trim()}`;
+
       const body = lines.slice(start + 1, end).join('\n').trim();
-      sections.push({ topic, headline, body });
+      sections.push({ title, body });
     }
 
-    const items = [];
-    for (const sec of sections) {
-      const ticker = this._inferTicker(sec.topic, sec.body) || this._inferTicker(sec.headline, sec.body);
-      if (!ticker || ['QUANTUM','NUCLEAR','AI','MARKET'].includes(ticker)) continue;
-      const exposure = this._extractExposure(sec.body);
-      const bullets  = this._extractBullets(sec.body);
-      const sources  = this._extractSources(sec.body);
-      const category = this._categorize(sec.headline);
-      if (!bullets.length) continue;
-      let t = items.find(i => i.ticker === ticker);
-      if (!t) { t = { ticker, name: sec.topic, exposure, news: [], considerations: [], opportunities: [], sources: [] }; items.push(t); }
-      const entry = { headline: sec.headline, bullets };
-      if (category === 'considerations') t.considerations.push(entry); else if (category === 'opportunities') t.opportunities.push(entry); else t.news.push(entry);
-      sources.forEach(s => { if (!t.sources.find(x => x.url === s.url)) t.sources.push(s); });
-    }
+    // --- split portfolio meta-section into multiple cards ---
+    const cards = [];
+    sections.forEach(sec => {
+      if (/portfolio\s+(opportunities|&|and)\s+considerations/i.test(sec.title)) {
+        this._extractPortfolioEntries(sec.body).forEach(entry => {
+          cards.push({
+            title: entry.title,
+            bullets: entry.points,
+            sources: [],
+            category: 'considerations',
+            tag: 'PORTFOLIO'
+          });
+        });
+        return;
+      }
 
-    return { title, items };
+      // normal section → build a card
+      const bullets = this._extractBullets(sec.body);
+      const sources = this._extractSources(sec.body);
+
+      // if no bullets, fall back to paragraphs (split on blank lines)
+      const fallbackParas = !bullets.length
+        ? sec.body.split(/\n{2,}/).map(s => s.trim()).filter(Boolean)
+        : [];
+
+      cards.push({
+        title: sec.title,
+        bullets: bullets.length ? bullets : fallbackParas,
+        sources,
+        category: this._categorize(sec.title),
+        tag: this._inferTicker(sec.title, sec.body) || 'GENERAL'
+      });
+    });
+
+    const docTitle =
+      (text.match(/^\s*(?:Scout Pulse|Portfolio Digest|Digest)\s*:\s*([^\n]+)$/mi)?.[1] ||
+       text.match(/^\s*Title\s*:\s*([^\n]+)$/mi)?.[1] || 'Portfolio Digest').trim();
+
+    return { title: docTitle, cards };
   }
 
   _normalizeText(s) {
@@ -329,8 +331,95 @@ class PulseWidgetController {
       .replace(/\n{3,}/g, '\n\n');
   }
 
-  _isBulletLine(line) { return /^[•\-*]\s+/.test(line) || /^\d+\.\s+/.test(line); }
+  _isBulletLine(line) { return /^[•\-*]|^\d+\./.test(line); }
 
+  // Bullets: join wrapped lines and stop at Sources
+  _extractBullets(body) {
+    const out = [];
+    const arr = (body || '').split('\n');
+
+    const isBullet = (s) => /^([•\-*]|\d+\.)\s+/.test(s.trim());
+    const isSources = (s) => /^sources?\s*:?\s*$/i.test(s.replace(/\*/g,'').trim());
+
+    for (let i = 0; i < arr.length; i++) {
+      let line = arr[i].trim();
+      if (!isBullet(line)) continue;
+
+      // strip marker
+      let cur = line.replace(/^([•\-*]|\d+\.)\s+/, '').trim();
+
+      // consume continuation lines until next bullet, blank, or Sources
+      while (
+        i + 1 < arr.length &&
+        arr[i + 1].trim() &&
+        !isBullet(arr[i + 1]) &&
+        !isSources(arr[i + 1])
+      ) {
+        cur += ' ' + arr[i + 1].trim();
+        i++;
+      }
+      out.push(cur);
+    }
+    return out;
+  }
+
+  // Sources: tolerant until next header-like line
+  _extractSources(body) {
+    const out = [];
+    const lines = (body || '').split('\n');
+
+    // find the first 'Sources:' line
+    let idx = lines.findIndex(l => /^(\*\*)?\s*Sources?\s*:/.test(l.trim()));
+    if (idx === -1) idx = lines.findIndex(l => /^Sources?\s*:/.test(l.trim()));
+    if (idx === -1) return out;
+
+    for (let i = idx + 1; i < lines.length; i++) {
+      const raw = lines[i].trim();
+      if (!raw) break;
+      if (/^#{1,3}\s+/.test(raw)) break;                 // markdown header
+      if (/^[A-Z][^:]{2,80}:\s*$/.test(raw)) break;      // obvious header-like
+      const url = (raw.match(/(https?:\/\/\S+)/) || [])[1];
+      if (!url) continue;
+      const title = raw.replace(url, '').trim().replace(/^[\-–—:\s"]+|["\s]+$/g, '') || 'Source';
+      out.push({ title, url });
+    }
+    return out;
+  }
+
+  // Portfolio-wide narrative → entries
+  _extractPortfolioEntries(body) {
+    const lines = (body || '').replace(/\r/g, '').split('\n');
+
+    const isSubhead = (s) => {
+      const t = s.trim().replace(/\*+/g, '');
+      if (!t) return false;
+      if (/^sources?\s*:$/i.test(t)) return false;
+      if (/^([•\-*]|\d+\.)\s+/.test(t)) return false;
+      return /^[A-Z][A-Za-z0-9\s,&\-’'():]+$/.test(t) && t.length <= 80;
+    };
+
+    const entries = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!isSubhead(lines[i])) continue;
+      const title = lines[i].trim().replace(/\*+/g, '');
+      const paras = [];
+      let cur = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const L = lines[j];
+        if (!L.trim()) { if (cur.length) { paras.push(cur.join(' ')); cur = []; } continue; }
+        if (isSubhead(L)) break;
+        if (/^([•\-*]|\d+\.)\s+/.test(L.trim())) break;
+        cur.push(L.trim());
+        i = j;
+      }
+      if (cur.length) paras.push(cur.join(' '));
+      const points = paras.filter(Boolean);
+      if (points.length) entries.push({ title, points });
+    }
+    return entries;
+  }
+
+  // Optional tag inference (kept for metadata)
   _inferTicker(topic, body) {
     const map = {
       'nvidia':'NVDA','nvda':'NVDA',
@@ -351,31 +440,6 @@ class PulseWidgetController {
     const paren = (body || '').match(/\(([A-Z]{2,5})\)/);
     if (paren) return paren[1];
     return null;
-  }
-
-  _extractExposure(body) {
-    const m = (body || '').match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
-    return m ? parseFloat(m[1]) : 0;
-  }
-
-  _extractBullets(body) {
-    return (body || '').split('\n')
-      .map(l => l.trim())
-      .filter(l => /^([•\-*]|\d+\.)\s+/.test(l))
-      .map(l => l.replace(/^([•\-*]|\d+\.)\s+/, '').trim());
-  }
-
-  _extractSources(body) {
-    const out = [];
-    const m = (body || '').match(/^(?:Citations?|Sources?)\s*:\s*([\s\S]*?)$/mi);
-    if (!m) return out;
-    m[1].split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
-      const url = (line.match(/(https?:\/\/[^\s]+)/) || [])[1];
-      if (!url) return;
-      const title = line.replace(url, '').trim().replace(/^[\-–—:\s"]+|["\s]+$/g, '') || 'Source';
-      out.push({ title, url });
-    });
-    return out;
   }
 
   _categorize(headline) {
@@ -406,18 +470,29 @@ class PulseWidgetController {
   renderDigest() {
     if (!this.digest) return;
 
-    const news = [], cons = [], opps = [], sources = [];
+    const news = [], cons = [], opps = [];
+    const sourceGroups = new Map(); // articleTitle -> [{title,url}]
 
-    this.digest.items.forEach(item => {
-      item.news.forEach(e => news.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
-      item.considerations.forEach(e => cons.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
-      item.opportunities.forEach(e => opps.push({ ticker: item.ticker, headline: e.headline, bullets: e.bullets, exposure: item.exposure }));
-      if (item.sources.length) sources.push({ ticker: item.ticker, links: item.sources });
+    const addSources = (articleTitle, links=[]) => {
+      if (!links?.length) return;
+      if (!sourceGroups.has(articleTitle)) sourceGroups.set(articleTitle, []);
+      const arr = sourceGroups.get(articleTitle);
+      links.forEach(l => { if (!arr.find(x => x.url === l.url)) arr.push(l); });
+    };
+
+    this.digest.cards.forEach(card => {
+      const entry = { title: card.title, bullets: card.bullets || [] };
+      if (card.category === 'considerations') cons.push(entry);
+      else if (card.category === 'opportunities') opps.push(entry);
+      else news.push(entry);
+      addSources(card.title, card.sources);
     });
 
     this._renderHeadlines('newsList', news);
     this._renderHeadlines('considerationsList', cons);
     this._renderHeadlines('opportunitiesList', opps);
+
+    const sources = [...sourceGroups.entries()].map(([articleTitle, links]) => ({ articleTitle, links }));
     this._renderSources('sourcesList', sources);
   }
 
@@ -429,14 +504,13 @@ class PulseWidgetController {
     el.innerHTML = list.map((item, i) => `
       <div class="headline-item" data-index="${i}">
         <div class="headline-header">
-          <div class="headline-text">${item.ticker}: ${item.headline}</div>
+          <div class="headline-text">${item.title}</div>
           <div class="headline-toggle">▼</div>
         </div>
         <div class="headline-details">
-          <div class="headline-ticker">${item.ticker} • ${item.exposure.toFixed(1)}% exposure</div>
           ${item.bullets?.length ? `
             <ul class="headline-bullets">
-              ${item.bullets.slice(0, 5).map(b => `<li>${b}</li>`).join('')}
+              ${item.bullets.slice(0, 8).map(b => `<li>${b}</li>`).join('')}
             </ul>` : ''
           }
         </div>
@@ -447,15 +521,21 @@ class PulseWidgetController {
   _renderSources(containerId, groups) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    if (!groups.length) { el.innerHTML = '<div class="empty-state">No sources available</div>'; return; }
+
+    if (!groups.length) {
+      el.innerHTML = '<div class="empty-state">No sources available</div>';
+      return;
+    }
 
     el.innerHTML = groups.map(g => `
       <div class="source-group">
-        <div class="source-ticker">${g.ticker}</div>
-        ${g.links.slice(0, 5).map(l => `
-          <a href="${l.url}" target="_blank" rel="noopener noreferrer" class="source-link" title="${l.title}">
-            ${l.title}
-          </a>`).join('')}
+        <div class="source-ticker">${g.articleTitle}</div>
+        ${g.links.slice(0, 12).map(link => `
+          <a href="${link.url}" target="_blank" rel="noopener noreferrer"
+             class="source-link" title="${link.title}">
+            ${link.title || link.url}
+          </a>
+        `).join('')}
       </div>
     `).join('');
   }
