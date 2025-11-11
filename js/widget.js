@@ -180,10 +180,8 @@ parseDigest(raw) {
         .replace(/^-+\s*/, '')
         .trim();
     }
-
-    // --- extract bullets ---
-   // --- extract bullets (ignore anything after "Citations" or "Sources")
-let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources)\s*:?\s*/i.test(l));
+  // --- extract bullets (ignore anything after "Citations" or "Sources")
+let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
 if (endIdx === -1) endIdx = lines.length;
 
 const bullets = lines
@@ -219,7 +217,15 @@ const bullets = lines
   return { title: docTitle, cards };
 }
 
-
+/* ===== Helpers ===== */
+formatMarkdown(text) {
+  if (!text) return '';
+  return text
+    // **bold**
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // *italic*
+    .replace(/\*(.*?)\*/g, '<em>$1</em>');
+}
   /* ===== Render ===== */
   renderDigest() {
     if (!this.digest) return;
@@ -232,7 +238,7 @@ const bullets = lines
     this.renderGroup('considerationsList', group.considerations);
   }
 
- renderGroup(id, items) {
+renderGroup(id, items) {
   const el = document.getElementById(id);
   if (!el) return;
   if (!items.length) {
@@ -245,14 +251,14 @@ const bullets = lines
       (a, i) => `
         <div class="headline-item" data-i="${i}">
           <div class="headline-header">
-            <div class="headline-text">${a.title}</div>
+            <div class="headline-text">${this.formatMarkdown(a.title)}</div>
             <div class="headline-toggle">▼</div>
           </div>
           <div class="headline-details">
             ${
               a.bullets.length
-                ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${b}</li>`).join('')}</ul>`
-                : (a.body ? `<p>${a.body}</p>` : '')
+                ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${this.formatMarkdown(b)}</li>`).join('')}</ul>`
+                : (a.body ? `<p>${this.formatMarkdown(a.body)}</p>` : '')
             }
 
             ${
@@ -266,7 +272,7 @@ const bullets = lines
                           s => `
                           <li>
                             <a href="${s.url}" target="_blank" rel="noopener noreferrer">
-                              ${s.title || s.url}
+                              ${this.formatMarkdown(s.title) || s.url}
                             </a>
                           </li>`
                         )
@@ -282,6 +288,7 @@ const bullets = lines
     )
     .join('');
 }
+
 
 
   /* ===== UI Helpers ===== */
