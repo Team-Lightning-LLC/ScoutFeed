@@ -227,43 +227,55 @@ parseDigest(raw) {
     this.renderGroup('considerationsList', group.considerations);
   }
 
-  renderGroup(id, items) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (!items.length) return (el.innerHTML = '<div class="empty-state">No content</div>');
+ renderGroup(id, items) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-state">No content</div>';
+    return;
+  }
 
-    el.innerHTML = items
-      .map(
-        (a, i) => `
-      <div class="headline-item" data-i="${i}">
-        <div class="headline-header">
-          <div class="headline-text">${a.title}</div>
-          <div class="headline-toggle">▼</div>
+  el.innerHTML = items
+    .map(
+      (a, i) => `
+        <div class="headline-item" data-i="${i}">
+          <div class="headline-header">
+            <div class="headline-text">${a.title}</div>
+            <div class="headline-toggle">▼</div>
+          </div>
+          <div class="headline-details">
+            ${
+              a.bullets.length
+                ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${b}</li>`).join('')}</ul>`
+                : (a.body ? `<p>${a.body}</p>` : '')
+            }
+
+            ${
+              a.sources.length
+                ? `
+                  <div class="headline-sources">
+                    <strong>Sources:</strong>
+                    <ul class="source-list">
+                      ${a.sources
+                        .map(
+                          s => `
+                          <li>
+                            <a href="${s.url}" target="_blank" rel="noopener noreferrer">
+                              ${s.title || s.url}
+                            </a>
+                          </li>`
+                        )
+                        .join('')}
+                    </ul>
+                  </div>
+                `
+                : ''
+            }
+          </div>
         </div>
-        <div class="headline-details">
-${
-  a.bullets.length
-    ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${b}</li>`).join('')}</ul>`
-    : (a.body ? `<p>${a.body}</p>` : '')
-}
-
-${
-  a.sources.length
-    ? `
-      <div class="headline-sources">
-        <strong>Sources:</strong>
-        <ul class="source-list">
-          ${a.sources.map(s => `
-            <li>
-              <a href="${s.url}" target="_blank" rel="noopener noreferrer">
-                ${s.title || s.url}
-              </a>
-            </li>
-          `).join('')}
-        </ul>
-      </div>
-    `
-    : ''
+      `
+    )
+    .join('');
 }
 
 
