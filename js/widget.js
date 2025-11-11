@@ -1,7 +1,8 @@
-// widget.js — Portfolio Pulse (Stable MVP)
+// widget.js — Portfolio Pulse (final stable build)
 
 class PulseWidget {
   constructor() {
+    this.isGenerating = false;
     this.digest = null;
     this.init();
   }
@@ -9,25 +10,73 @@ class PulseWidget {
   /* ===== Lifecycle ===== */
   init() {
     this.bindUI();
-    this.loadLatestDigest(); // only runs once
+    this.loadLatestDigest();
+
+    // Schedule automatic digest generation at market open (09:30)
+    this.scheduleDigestAt("09:30");
+    // Optional second daily trigger (uncomment + set time)
+    // this.scheduleDigestAt("15:45");
   }
 
   bindUI() {
-    document.addEventListener('click', e => {
-      const header = e.target.closest('.headline-header');
-      if (!header) return;
-      header.closest('.headline-item')?.classList.toggle('expanded');
-    });
+    const btn = document.getElementById('generateBtn');
+    if (btn) btn.addEventListener('click', () => this.generateDigest());
   }
 
-  /* ===== Load Digest ===== */
+  /* ===== Generation ===== */
+  async generateDigest() {
+    if (this.isGenerating) return;
+    this.isGenerating = true;
+
+    const btn = document.getElementById('generateBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+    }
+    this.updateStatus('Generating...', false);
+
+    try {
+      await vertesiaAPI.executeAsync({ Task: 'begin' });
+      await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // 5 min delay
+      await this.loadLatestDigest();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to generate digest');
+    } finally {
+      this.isGenerating = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Generate Digest';
+      }
+    }
+  }
+
+  /* ===== Scheduling ===== */
+  scheduleDigestAt(timeStr) {
+    const [h, m] = timeStr.split(':').map(Number);
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(h, m, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+
+    const delay = next - now;
+    console.log(`[Pulse] Next digest scheduled at ${timeStr} (${(delay / 60000).toFixed(1)} min from now)`);
+
+    setTimeout(async () => {
+      console.log(`[Pulse] Running scheduled digest generation...`);
+      await this.generateDigest();
+      this.scheduleDigestAt(timeStr); // reschedule next day
+    }, delay);
+  }
+
+  /* ===== Load ===== */
   async loadLatestDigest() {
     this.updateStatus('Loading...', false);
-
     try {
       const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
       if (!objects.length) throw new Error('No documents found');
 
+      // newest first
       objects.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
 
       const digestObj = objects.find(o =>
@@ -65,7 +114,33 @@ class PulseWidget {
   async downloadAsText(fileRef) {
     const urlData = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
     const res = await fetch(urlData.url);
-    return res.text();
+    const buf = await res.arrayBuffer();
+    const ctype = (res.headers.get('content-type') || '').toLowerCase();
+
+    if (ctype.includes('text') || ctype.includes('json')) return await res.text();
+
+    if (ctype.includes('pdf') || new TextDecoder().decode(buf.slice(0, 5)).startsWith('%PDF')) {
+      await this.ensurePdfJs();
+      const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      let out = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const text = await page.getTextContent();
+        out += text.items.map(t => t.str).join(' ') + '\n';
+      }
+      return out;
+    }
+    return new TextDecoder('utf-8').decode(buf);
+  }
+
+  async ensurePdfJs() {
+    if (window.pdfjsLib) return;
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    document.head.appendChild(s);
+    await new Promise(r => (s.onload = r));
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 
   /* ===== Parse ===== */
@@ -77,28 +152,28 @@ class PulseWidget {
     for (const block of blocks) {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
       if (lines.length < 2) continue;
-
       if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
-      lines.shift();
 
+      lines.shift();
       let title = 'Untitled Article';
-      const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
-      if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+      const titleMatch = lines.find(l =>
+        /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l) || /^[A-Z][A-Za-z0-9\s,:’'()\-&]+$/.test(l)
+      );
+      if (titleMatch) {
+        title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+      }
 
       let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
       if (endIdx === -1) endIdx = lines.length;
 
-      const bullets = lines
-        .slice(0, endIdx)
+      const bullets = lines.slice(0, endIdx)
         .filter(l => /^[•\-*]\s/.test(l))
         .map(l => l.replace(/^[•\-*]\s*/, '').trim());
 
       const sources = [];
       const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
       if (citeBlock) {
-        citeBlock[1]
-          .split('\n')
-          .map(l => l.trim())
+        citeBlock[1].split('\n').map(l => l.trim())
           .filter(l => l.startsWith('-') || l.startsWith('•'))
           .forEach(l => {
             const url = (l.match(/https?:\/\/\S+/) || [])[0];
@@ -108,16 +183,18 @@ class PulseWidget {
           });
       }
 
-      cards.push({ title, bullets, sources });
+      cards.push({ title, bullets, sources, category: 'news' });
     }
 
-    const docTitle = text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim()
-      || text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim()
-      || 'Portfolio Digest';
+    const docTitle =
+      text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      'Portfolio Digest';
 
     return { title: docTitle, cards };
   }
 
+  /* ===== Helpers ===== */
   formatMarkdown(text) {
     if (!text) return '';
     return text
@@ -128,38 +205,58 @@ class PulseWidget {
   /* ===== Render ===== */
   renderDigest() {
     if (!this.digest) return;
-
-    const newsList = document.getElementById('newsList');
-    const dateHeader = document.querySelector('.date-display');
+    const headerDate = document.querySelector('.date-display');
     const footerDate = document.querySelector('.last-updated');
+    const digestDate = this.digest?.created_at ? new Date(this.digest.created_at) : new Date();
 
-    const createdAt = new Date(this.digest.created_at);
+    if (headerDate) headerDate.textContent = this.formatDate(digestDate);
+    if (footerDate)
+      footerDate.textContent = `Last Update: ${digestDate.toLocaleString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })}`;
 
-    if (dateHeader) dateHeader.textContent = createdAt.toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric'
-    });
-    if (footerDate) footerDate.textContent = `Last Update: ${createdAt.toLocaleString()}`;
-
-    newsList.innerHTML = this.digest.cards.map((a, i) => `
+    const el = document.getElementById('newsList');
+    if (!el) return;
+    el.innerHTML = this.digest.cards
+      .map(
+        (a, i) => `
       <div class="headline-item" data-i="${i}">
         <div class="headline-header">
           <div class="headline-text">${this.formatMarkdown(a.title)}</div>
           <div class="headline-toggle">▼</div>
         </div>
         <div class="headline-details">
-          ${a.bullets.length ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${this.formatMarkdown(b)}</li>`).join('')}</ul>` : ''}
-          ${a.sources.length ? `
+          ${
+            a.bullets.length
+              ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${this.formatMarkdown(b)}</li>`).join('')}</ul>`
+              : ''
+          }
+          ${
+            a.sources.length
+              ? `
             <div class="headline-sources">
               <strong>Sources:</strong>
               <ul class="source-list">
-                ${a.sources.map(s => `<li><a href="${s.url}" target="_blank">${this.formatMarkdown(s.title)}</a></li>`).join('')}
+                ${a.sources.map(s => `
+                  <li>
+                    <a href="${s.url}" target="_blank" rel="noopener noreferrer">${this.formatMarkdown(s.title) || s.url}</a>
+                  </li>`).join('')}
               </ul>
-            </div>` : ''}
+            </div>
+          ` : ''
+          }
         </div>
-      </div>`).join('');
+      </div>`
+      )
+      .join('');
   }
 
-  /* ===== UI Helpers ===== */
+  /* ===== UI ===== */
   updateStatus(text, active) {
     const dot = document.querySelector('.status-dot');
     const txt = document.querySelector('.status-text');
@@ -171,8 +268,15 @@ class PulseWidget {
     const el = document.getElementById('newsList');
     if (el) el.innerHTML = `<div class="empty-state">${msg}</div>`;
   }
+
+  formatDate(d) {
+    return d.toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric'
+    });
+  }
 }
 
+/* bootstrap */
 document.addEventListener('DOMContentLoaded', () => {
   window.pulseWidget = new PulseWidget();
 });
