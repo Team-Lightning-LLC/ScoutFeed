@@ -141,45 +141,73 @@ class PulseWidgetController {
       
       console.log('Digest object:', digestObject);
       
-      // Extract content
+// ...everything above unchanged...
+
+  async loadLatestDigest() {
+    this.updateStatus('Loading...', false);
+
+    try {
+      console.log('=== Loading all objects ===');
+
+      const response = await vertesiaAPI.loadAllObjects(1000);
+      const allDocuments = response.objects || [];
+      allDocuments.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+
+      console.log('All document names:', allDocuments.map(d => d.name).slice(0,20));
+
+      const digests = allDocuments.filter(doc => {
+        const n = (doc.name || '').toLowerCase();
+        return n.includes('digest:') || n.includes('scout pulse:');
+      });
+
+      console.log('Found digests:', digests.map(d => d.name));
+      if (digests.length === 0) {
+        this.updateStatus('No digests yet', false);
+        this.showEmptyState('No digests found. Click "Generate Digest" to create one.');
+        return;
+      }
+
+      const latestDigest = digests[0];
+      console.log('Latest digest:', latestDigest.name, latestDigest.id);
+
+      const digestObject = await vertesiaAPI.getObject(latestDigest.id);
+      console.log('Digest object:', digestObject);
+
+      // -------- FIXED: robust content extraction --------
       let content;
-      if (digestObject.content && digestObject.content.source) {
-        // Check if it's a file reference
-        if (typeof digestObject.content.source === 'object' && digestObject.content.source.file) {
-          console.log('Digest is a file, downloading...');
-          content = await vertesiaAPI.getFileContent(digestObject.content.source.file);
+      if (digestObject.content && digestObject.content.source != null) {
+        const src = digestObject.content.source;
+        if (typeof src === 'string') {
+          // inline text
+          content = src;
         } else {
-          // Direct text content
-          console.log('Digest has direct text content');
-          content = digestObject.content.source;
+          // stored file: support {file}|{store}|{path}|{key}
+          console.log('Digest is a file, downloading...');
+          const fileRef = src.file || src.store || src.path || src.key;
+          if (!fileRef) throw new Error('Unknown file reference shape in content.source');
+          content = await vertesiaAPI.getFileContent(fileRef);
         }
       } else {
         throw new Error('No content found in digest object');
       }
-      
+      // --------------------------------------------------
+
       console.log('Content loaded, length:', content.length);
       console.log('First 500 chars:', content.substring(0, 500));
-      
-      // Parse Scout's format
+
       const parsed = this.parseScoutDigest(content);
-      
       console.log('Parsed digest:', parsed);
-      
+
       if (!parsed.items || parsed.items.length === 0) {
-        console.warn('No items parsed from digest');
         this.showEmptyState('Digest loaded but no items found. Check console for details.');
         this.updateStatus('No items', false);
         return;
       }
-      
-      // Store
+
       this.digest = parsed;
-      
-      // Render
       this.renderDigest();
       this.updateStatus('Active', true);
-      
-      // Update footer timestamp
+
       const date = new Date(latestDigest.created_at);
       const footer = document.querySelector('.widget-footer');
       let timestamp = footer.querySelector('.last-updated');
@@ -191,7 +219,15 @@ class PulseWidgetController {
         footer.appendChild(timestamp);
       }
       timestamp.textContent = `Updated ${this.getRelativeTime(date)}`;
-      
+
+      console.log('=== Digest loaded successfully ===');
+    } catch (error) {
+      console.error('Failed to load digest:', error);
+      this.updateStatus('Error loading', false);
+      this.showEmptyState(`Error: ${error.message}`);
+    }
+  }
+
       console.log('=== Digest loaded successfully ===');
       
     } catch (error) {
