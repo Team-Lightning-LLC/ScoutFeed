@@ -153,44 +153,67 @@ if (!text || text.trim().length < 20) {
   }
 
   /* ===== Parse ===== */
-  parseDigest(raw) {
-    const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
-    const parts = text.split(/(?=Article\s+\d+|Portfolio\s+Opportunities|Portfolio\s+Considerations)/gi);
-    const cards = parts
-      .map(block => {
-        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-        const title = lines.shift()?.replace(/\*/g, '').trim() || 'Untitled';
-        const body = lines.join('\n');
+parseDigest(raw) {
+  const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
 
-        // bullets
-        const bullets = (body.match(/^[•\-*]\s.*$/gm) || []).map(b => b.replace(/^[•\-*]\s*/, '').trim());
+  // --- split on "Article X" markers ---
+  const blocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
+  const cards = [];
 
-        // citations
-        const citations = [];
-        const m = body.match(/\*\*Citations:\*\*([\s\S]*)$/i);
-        if (m) {
-          m[1]
-            .split('\n')
-            .map(l => l.trim())
-            .filter(l => l.startsWith('-') || l.startsWith('•'))
-            .forEach(l => {
-              const url = (l.match(/https?:\/\/\S+/) || [])[0];
-              if (!url) return;
-              const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
-              citations.push({ title: t || 'Source', url });
-            });
-        }
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
 
-        let category = 'news';
-        if (/consideration/i.test(title)) category = 'considerations';
-        if (/opportunit/i.test(title)) category = 'opportunities';
+    // skip top-level digest title lines
+    if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
 
-        return { title, bullets, sources: citations, category };
-      })
-      .filter(c => c.title.length > 3);
+    // --- extract article title ---
+    lines.shift(); // remove "Article X"
+    let title = 'Untitled Article';
+    const titleMatch = lines.find(l =>
+      /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l) || /^[A-Z][A-Za-z0-9\s,:’'()\-&]+$/.test(l)
+    );
+    if (titleMatch) {
+      title = titleMatch
+        .replace(/^#+\s*/, '')
+        .replace(/\*\*/g, '')
+        .replace(/^-+\s*/, '')
+        .trim();
+    }
 
-    return { title: 'Portfolio Digest', cards };
+    // --- extract bullets ---
+    const bullets = lines
+      .filter(l => /^[•\-*]\s/.test(l))
+      .map(l => l.replace(/^[•\-*]\s*/, '').trim());
+
+    // --- extract sources/citations ---
+    const sources = [];
+    const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
+    if (citeBlock) {
+      citeBlock[1]
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.startsWith('-') || l.startsWith('•'))
+        .forEach(l => {
+          const url = (l.match(/https?:\/\/\S+/) || [])[0];
+          if (!url) return;
+          const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
+          sources.push({ title: t || 'Source', url });
+        });
+    }
+
+    cards.push({ title, bullets, sources, category: 'news' });
   }
+
+  // --- main digest title ---
+  const docTitle =
+    text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+    text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+    'Portfolio Digest';
+
+  return { title: docTitle, cards };
+}
+
 
   /* ===== Render ===== */
   renderDigest() {
