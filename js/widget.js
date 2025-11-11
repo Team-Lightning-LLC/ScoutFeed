@@ -1,4 +1,4 @@
-// widget.js — Portfolio Pulse (Stable Viewer + Scheduler + Minimal Change)
+// widget.js — Portfolio Pulse (Stable Viewer + Scheduler Integration)
 
 class PulseWidget {
   constructor() {
@@ -10,15 +10,17 @@ class PulseWidget {
   /* ===== Lifecycle ===== */
   init() {
     this.bindUI();
-    this.loadLatestDigest(); // loads once on start
-    this.scheduleDigestAt("09:30"); // auto update daily
+    this.loadLatestDigest(); // load once on startup
+    this.scheduleDigestAt("09:30"); // auto run each morning
     // Optional: this.scheduleDigestAt("15:45");
   }
 
   bindUI() {
+    // Manual trigger
     const btn = document.getElementById('generateBtn');
     if (btn) btn.addEventListener('click', () => this.generateDigest());
 
+    // Expand/collapse article cards
     document.addEventListener('click', e => {
       const header = e.target.closest('.headline-header');
       if (!header) return;
@@ -40,11 +42,11 @@ class PulseWidget {
     setTimeout(async () => {
       console.log(`[Pulse] Running scheduled digest generation...`);
       await this.generateDigest();
-      this.scheduleDigestAt(timeStr); // repeat daily
+      this.scheduleDigestAt(timeStr); // re-schedule for next day
     }, delay);
   }
 
-  /* ===== Generate (Manual + Auto) ===== */
+  /* ===== Manual + Auto Generation ===== */
   async generateDigest() {
     if (this.isGenerating) return;
     this.isGenerating = true;
@@ -54,15 +56,13 @@ class PulseWidget {
       btn.disabled = true;
       btn.textContent = 'Generating...';
     }
-    this.updateStatus('Updating...', false);
-
-    // Keep current digest visible while generating new one
-    if (this.digest) this.renderDigest();
+    this.updateStatus('Generating...', false);
 
     try {
       await vertesiaAPI.executeAsync({ Task: 'begin' });
-      await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // wait 5 min
-      await this.loadLatestDigest(); // refresh viewer
+      // Wait 5 min for async completion
+      await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+      await this.loadLatestDigest();
     } catch (err) {
       console.error('[Pulse] Generation failed:', err);
       this.showEmpty('Error generating digest');
@@ -72,34 +72,47 @@ class PulseWidget {
         btn.disabled = false;
         btn.textContent = 'Generate Digest';
       }
+      this.updateStatus('Active', true);
     }
   }
 
-  /* ===== Load Latest Digest ===== */
+  /* ===== Load Digest ===== */
   async loadLatestDigest() {
     this.updateStatus('Loading...', false);
 
     try {
       const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
-      if (!objects.length) return this.showEmpty('No documents found');
+      if (!objects.length) throw new Error('No documents found');
 
-      // sort newest first
-      objects.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
-      const digestObj = objects.find(o => (o.name || '').toLowerCase().includes('digest'));
-      if (!digestObj) return this.showEmpty('No digest found');
+      objects.sort((a, b) =>
+        new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)
+      );
 
-  const object = await vertesiaAPI.getObject(digestObj.id);
+      const digestObj = objects.find(o =>
+        `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase().includes('digest')
+      );
+      if (!digestObj) throw new Error('No digest found');
 
-      const src = object?.content?.source || object?.content || object?.source;
-      if (!src) return this.showEmpty('No digest content found');
+      // ✅ critical: fetch full object (includes content.source)
+      const object = await vertesiaAPI.getObject(digestObj.id);
+      const src = object?.content?.source;
+      if (!src) throw new Error('No content source');
 
-      let text = typeof src === 'string' ? src : await this.downloadAsText(src.file || src.store || src.path || src.key);
-      if (!text || text.trim().length < 20) return this.showEmpty('Empty digest text');
+      let text;
+      if (typeof src === 'string') {
+        text = src.startsWith('gs://') || src.startsWith('s3://')
+          ? await this.downloadAsText(src)
+          : src;
+      } else if (typeof src === 'object') {
+        const fileRef = src.file || src.store || src.path || src.key;
+        text = await this.downloadAsText(fileRef);
+      }
+
+      if (!text || text.trim().length < 20) throw new Error('Empty digest text');
 
       this.digest = this.parseDigest(text);
       this.digest.created_at = object.created_at || object.updated_at || new Date().toISOString();
-
-      this.renderDigest(); // re-render viewer in place
+      this.renderDigest();
       this.updateStatus('Active', true);
     } catch (err) {
       console.error('[Pulse] Load failed:', err);
@@ -133,14 +146,17 @@ class PulseWidget {
       let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
       if (endIdx === -1) endIdx = lines.length;
 
-      const bullets = lines.slice(0, endIdx)
+      const bullets = lines
+        .slice(0, endIdx)
         .filter(l => /^[•\-*]\s/.test(l))
         .map(l => l.replace(/^[•\-*]\s*/, '').trim());
 
       const sources = [];
       const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
       if (citeBlock) {
-        citeBlock[1].split('\n').map(l => l.trim())
+        citeBlock[1]
+          .split('\n')
+          .map(l => l.trim())
           .filter(l => l.startsWith('-') || l.startsWith('•'))
           .forEach(l => {
             const url = (l.match(/https?:\/\/\S+/) || [])[0];
@@ -153,9 +169,10 @@ class PulseWidget {
       cards.push({ title, bullets, sources });
     }
 
-    const docTitle = text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim()
-      || text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim()
-      || 'Portfolio Digest';
+    const docTitle =
+      text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      'Portfolio Digest';
 
     return { title: docTitle, cards };
   }
@@ -163,15 +180,20 @@ class PulseWidget {
   /* ===== Render ===== */
   renderDigest() {
     if (!this.digest) return;
-    const list = document.getElementById('newsList');
-    const headerDate = document.querySelector('.date-display');
+
+    const newsList = document.getElementById('newsList');
+    const dateHeader = document.querySelector('.date-display');
     const footerDate = document.querySelector('.last-updated');
     const createdAt = new Date(this.digest.created_at);
 
-    if (headerDate) headerDate.textContent = createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    if (footerDate) footerDate.textContent = `Last Update: ${createdAt.toLocaleString()}`;
+    if (dateHeader)
+      dateHeader.textContent = createdAt.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      });
+    if (footerDate)
+      footerDate.textContent = `Last Update: ${createdAt.toLocaleString()}`;
 
-    list.innerHTML = this.digest.cards.map((a, i) => `
+    newsList.innerHTML = this.digest.cards.map((a, i) => `
       <div class="headline-item" data-i="${i}">
         <div class="headline-header">
           <div class="headline-text">${this.formatMarkdown(a.title)}</div>
@@ -193,7 +215,9 @@ class PulseWidget {
   /* ===== Helpers ===== */
   formatMarkdown(text) {
     if (!text) return '';
-    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>');
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>');
   }
 
   updateStatus(text, active) {
@@ -209,7 +233,6 @@ class PulseWidget {
   }
 }
 
-/* bootstrap */
 document.addEventListener('DOMContentLoaded', () => {
   window.pulseWidget = new PulseWidget();
 });
