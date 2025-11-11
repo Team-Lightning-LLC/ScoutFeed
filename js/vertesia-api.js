@@ -1,232 +1,76 @@
+// vertesia-api.js
+// Compatible with widget.js expectations + tolerant file handling.
+
 class VertesiaAPI {
   constructor() {
     this.baseURL = CONFIG.VERTESIA_BASE_URL;
-    this.apiKey = CONFIG.VERTESIA_API_KEY;
+    this.apiKey  = CONFIG.VERTESIA_API_KEY;
+  }
+
+  _headers() {
+    return {
+      'Authorization': `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/json'
+    };
   }
 
   async call(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    
-    const defaultOptions = {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json'
-      }
-    };
-
-    const response = await fetch(url, { ...defaultOptions, ...options });
-    
-    if (!response.ok) {
-      throw new Error(`API call failed: ${response.statusText}`);
-    }
-
-    return await response.json();
+    const defaults = { method: 'GET', headers: this._headers() };
+    const res = await fetch(url, { ...defaults, ...options });
+    if (!res.ok) throw new Error(`API call failed: ${res.status} ${res.statusText}`);
+    return res.headers.get('content-type')?.includes('application/json')
+      ? res.json()
+      : res.text();
   }
 
-  // Generate digest
-  async generateDigest() {
-    console.log('Triggering Pulse interaction...');
-    
-    const response = await this.call('/execute/async', {
+  // ---------- Methods the widget expects ----------
+  async executeAsync(data = { Task: 'begin' }) {
+    return this.call('/execute/async', {
       method: 'POST',
       body: JSON.stringify({
         type: 'conversation',
         interaction: CONFIG.INTERACTION_NAME,
-        data: {
-          Task: 'begin'
-        },
-        config: {
-          environment: CONFIG.ENVIRONMENT_ID,
-          model: CONFIG.MODEL
-        }
+        data,
+        config: { environment: CONFIG.ENVIRONMENT_ID, model: CONFIG.MODEL }
       })
     });
-
-    return response;
   }
 
-  // Get single object by ID
-  async getObject(objectId) {
-    return await this.call(`/objects/${objectId}`);
+  async loadAllObjects(limit = 1000, offset = 0) {
+    const objects = await this.call(`/objects?limit=${limit}&offset=${offset}`, { method: 'GET' });
+    return Array.isArray(objects) ? { objects } : { objects: [] };
   }
 
-  // Load all documents from API
-  async loadDocuments() {  // ← FIXED: Proper method definition
-    try {
-      console.log('Loading all documents...');
-
-      const response = await fetch(`${CONFIG.VERTESIA_BASE_URL}/objects?limit=1000&offset=0`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${CONFIG.VERTESIA_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`API call failed: ${response.status} ${response.statusText}`);
-      }
-
-      const allObjects = await response.json();
-      console.log('Loaded all objects:', allObjects.length);
-
-      const documents = [];
-      for (const obj of allObjects) {
-        try {
-          const transformed = this.transformDocument(obj);
-          documents.push(transformed);
-        } catch (error) {
-          console.error('Failed to transform:', obj.name, error);
-        }
-      }
-
-      documents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-      console.log('Final documents array:', documents.length);
-      return documents;
-
-    } catch (error) {
-      console.error('Failed to load documents:', error);
-      return [];
-    }
+  async getObject(id) {
+    if (!id) throw new Error('getObject: id required');
+    return this.call(`/objects/${encodeURIComponent(id)}`, { method: 'GET' });
   }
 
-  // Transform API object to document format
-  transformDocument(obj) {
-    let title = obj.name || 'Untitled';
-
-    const prefixes = ['DeepResearch_', 'Deep Research_', 'deep research_', 'DEEP RESEARCH_', 'DEEP RESEARCH:', 'Digest:'];
-    prefixes.forEach(prefix => {
-      if (title.startsWith(prefix)) {
-        title = title.substring(prefix.length).trim();
-      }
+  async getDownloadUrl(file, format = 'original') {
+    return this.call('/objects/download-url', {
+      method: 'POST',
+      body: JSON.stringify({ file, format })
     });
-
-    title = title.replace(/[_-]/g, ' ').trim();
-
-    return {
-      id: obj.id,
-      title: title,
-      area: obj.properties?.capability || 'Research',
-      topic: obj.properties?.framework || 'General',
-      created_at: obj.created_at || obj.properties?.generated_at || new Date().toISOString(),
-      content_source: obj.content?.source,
-      when: this.formatDate(obj.created_at || obj.properties?.generated_at),
-      modifiers: obj.properties?.modifiers || null,
-      parent_document_id: obj.properties?.parent_document_id || null
-    };
   }
 
-  // Format date for display
-  formatDate(dateString) {
-    if (!dateString) return 'Recent';
-    
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric', 
-        year: 'numeric' 
-      });
-    } catch {
-      return 'Recent';
-    }
-  }
+  // Accepts: string OR {file}|{store}|{path}|{key}
+  async getFileContent(fileRef, format = 'original') {
+    const file = typeof fileRef === 'string'
+      ? fileRef
+      : (fileRef?.file || fileRef?.store || fileRef?.path || fileRef?.key);
 
-  // Get file content from file reference
-  async getFileContent(fileReference) {
-    try {
-      // Get download URL
-      const downloadData = await this.call('/objects/download-url', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          file: fileReference,
-          format: 'original'
-        })
-      });
+    if (!file) throw new Error('getFileContent: invalid file reference');
 
-      // Fetch the actual content
-      const response = await fetch(downloadData.url);
-      if (!response.ok) {
-        throw new Error(`Failed to download file: ${response.statusText}`);
-      }
-
-      return await response.text();
-    } catch (error) {
-      console.error('Failed to get file content:', error);
-      throw error;
-    }
-  }
-
-  // Get most recent digest (filter from all docs)
-  async getLatestDigest() {
-    const allDocs = await this.loadDocuments();  // ← Changed to match method name
-    
-    const digests = allDocs.filter(doc => 
-      doc.title && (doc.title.toLowerCase().includes('digest') || doc.area === 'Pulse')
-    );
-    
-    console.log('Found digests:', digests.length);
-    
-    if (digests.length === 0) {
-      return null;
-    }
-    
-    return digests[0];
-  }
-
-  // Get document content (like Scout does)
-  async getDocumentContent(doc) {
-    try {
-      if (!doc.content_source) {
-        throw new Error('No content source found');
-      }
-
-      const downloadResponse = await fetch(`${CONFIG.VERTESIA_BASE_URL}/objects/download-url`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${CONFIG.VERTESIA_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          file: doc.content_source,
-          format: 'original'
-        })
-      });
-
-      if (!downloadResponse.ok) {
-        throw new Error(`Failed to get download URL: ${downloadResponse.statusText}`);
-      }
-
-      const downloadData = await downloadResponse.json();
-
-      const contentResponse = await fetch(downloadData.url);
-      if (!contentResponse.ok) {
-        throw new Error(`Failed to download content: ${contentResponse.statusText}`);
-      }
-
-      const content = await contentResponse.text();
-      return content;
-
-    } catch (error) {
-      console.error('Failed to get document content:', error);
-      throw error;
-    }
-  }
-}
-
-const vertesiaAPI = new VertesiaAPI();    if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+    const { url } = await this.getDownloadUrl(file, format);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
     return res.text();
   }
 
-  /* ===== Your existing convenience methods (kept) ===== */
+  // ---------- Convenience (kept) ----------
+  async generateDigest() { return this.executeAsync({ Task: 'begin' }); }
 
-  async generateDigest() {
-    return this.executeAsync({ Task: 'begin' });
-  }
-
-  // Library loader used by other parts of your app
   async loadDocuments() {
     try {
       const allObjects = await this.call('/objects?limit=1000&offset=0', { method: 'GET' });
@@ -235,7 +79,7 @@ const vertesiaAPI = new VertesiaAPI();    if (!res.ok) throw new Error(`Download
         try { docs.push(this.transformDocument(obj)); }
         catch (e) { console.error('Transform failed:', obj?.name, e); }
       }
-      docs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      docs.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
       return docs;
     } catch (e) {
       console.error('loadDocuments failed:', e);
@@ -243,13 +87,9 @@ const vertesiaAPI = new VertesiaAPI();    if (!res.ok) throw new Error(`Download
     }
   }
 
-  // Use when you already have a doc with content_source
   async getDocumentContent(doc) {
     if (!doc?.content_source) throw new Error('No content source found');
-    const { url } = await this.call('/objects/download-url', {
-      method: 'POST',
-      body: JSON.stringify({ file: doc.content_source, format: 'original' })
-    });
+    const { url } = await this.getDownloadUrl(doc.content_source, 'original');
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
     return res.text();
@@ -281,5 +121,4 @@ const vertesiaAPI = new VertesiaAPI();    if (!res.ok) throw new Error(`Download
   }
 }
 
-// Make available to widget.js
 window.vertesiaAPI = new VertesiaAPI();
