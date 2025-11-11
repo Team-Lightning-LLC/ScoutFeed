@@ -1,4 +1,4 @@
-// widget.js — Portfolio Pulse (Stable MVP + Scheduler)
+// widget.js — Portfolio Pulse (Stable Viewer + Scheduler + Minimal Change)
 
 class PulseWidget {
   constructor() {
@@ -10,9 +10,9 @@ class PulseWidget {
   /* ===== Lifecycle ===== */
   init() {
     this.bindUI();
-    this.loadLatestDigest(); // run once on load
-    this.scheduleDigestAt("09:30"); // automatic daily update
-    // Optional second run: this.scheduleDigestAt("15:45");
+    this.loadLatestDigest(); // loads once on start
+    this.scheduleDigestAt("09:30"); // auto update daily
+    // Optional: this.scheduleDigestAt("15:45");
   }
 
   bindUI() {
@@ -26,7 +26,7 @@ class PulseWidget {
     });
   }
 
-  /* ===== Auto Generation ===== */
+  /* ===== Scheduler ===== */
   scheduleDigestAt(timeStr) {
     const [h, m] = timeStr.split(':').map(Number);
     const now = new Date();
@@ -40,11 +40,11 @@ class PulseWidget {
     setTimeout(async () => {
       console.log(`[Pulse] Running scheduled digest generation...`);
       await this.generateDigest();
-      this.scheduleDigestAt(timeStr); // reschedule daily
+      this.scheduleDigestAt(timeStr); // repeat daily
     }, delay);
   }
 
-  /* ===== Manual Trigger ===== */
+  /* ===== Generate (Manual + Auto) ===== */
   async generateDigest() {
     if (this.isGenerating) return;
     this.isGenerating = true;
@@ -54,12 +54,15 @@ class PulseWidget {
       btn.disabled = true;
       btn.textContent = 'Generating...';
     }
-    this.updateStatus('Generating...', false);
+    this.updateStatus('Updating...', false);
+
+    // Keep current digest visible while generating new one
+    if (this.digest) this.renderDigest();
 
     try {
       await vertesiaAPI.executeAsync({ Task: 'begin' });
-      await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // wait for completion
-      await this.loadLatestDigest();
+      await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // wait 5 min
+      await this.loadLatestDigest(); // refresh viewer
     } catch (err) {
       console.error('[Pulse] Generation failed:', err);
       this.showEmpty('Error generating digest');
@@ -72,7 +75,7 @@ class PulseWidget {
     }
   }
 
-  /* ===== Load Digest ===== */
+  /* ===== Load Latest Digest ===== */
   async loadLatestDigest() {
     this.updateStatus('Loading...', false);
 
@@ -80,6 +83,7 @@ class PulseWidget {
       const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
       if (!objects.length) return this.showEmpty('No documents found');
 
+      // sort newest first
       objects.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
       const digestObj = objects.find(o => (o.name || '').toLowerCase().includes('digest'));
       if (!digestObj) return this.showEmpty('No digest found');
@@ -94,7 +98,7 @@ class PulseWidget {
       this.digest = this.parseDigest(text);
       this.digest.created_at = object.created_at || object.updated_at || new Date().toISOString();
 
-      this.renderDigest();
+      this.renderDigest(); // re-render viewer in place
       this.updateStatus('Active', true);
     } catch (err) {
       console.error('[Pulse] Load failed:', err);
@@ -118,7 +122,6 @@ class PulseWidget {
     for (const block of blocks) {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
       if (lines.length < 2) continue;
-
       if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
       lines.shift();
 
