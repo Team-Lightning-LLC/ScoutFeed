@@ -1,4 +1,4 @@
-// widget.js — Portfolio Pulse (Stable Viewer + Scheduler Integration)
+// stable for the night widget.js — Portfolio Pulse (Stable Viewer + Scheduler Integration)
 
 class PulseWidget {
   constructor() {
