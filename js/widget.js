@@ -241,23 +241,31 @@ parseDigest(raw) {
           <div class="headline-toggle">▼</div>
         </div>
         <div class="headline-details">
-          ${
-            a.bullets.length
-              ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${b}</li>`).join('')}</ul>`
-              : `<p>${a.body || ''}</p>`
-          }
-          ${
-            a.sources.length
-              ? `<div class="citations">${a.sources
-                  .map(s => `<a href="${s.url}" target="_blank">${s.title}</a>`)
-                  .join('<br>')}</div>`
-              : ''
-          }
-        </div>
-      </div>`
-      )
-      .join('');
-  }
+${
+  a.bullets.length
+    ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${b}</li>`).join('')}</ul>`
+    : (a.body ? `<p>${a.body}</p>` : '')
+}
+
+${
+  a.sources.length
+    ? `
+      <div class="headline-sources">
+        <strong>Sources:</strong>
+        <ul class="source-list">
+          ${a.sources.map(s => `
+            <li>
+              <a href="${s.url}" target="_blank" rel="noopener noreferrer">
+                ${s.title || s.url}
+              </a>
+            </li>
+          `).join('')}
+        </ul>
+      </div>
+    `
+    : ''
+}
+
 
   /* ===== UI Helpers ===== */
   updateStatus(text, active) {
