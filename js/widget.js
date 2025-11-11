@@ -94,13 +94,6 @@ class PulseWidgetController {
       generateBtn.textContent = 'Generate Digest';
     }
   }
-
-  async loadLatestDigest() {
-    this.updateStatus('Loading...', false);
-    
-    try {
-      console.log('=== Loading all objects ===');
-      
       // Use YOUR loadAllObjects method
       const response = await vertesiaAPI.loadAllObjects(1000);
       const allDocuments = response.objects || [];
