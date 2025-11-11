@@ -182,9 +182,14 @@ parseDigest(raw) {
     }
 
     // --- extract bullets ---
-    const bullets = lines
-      .filter(l => /^[•\-*]\s/.test(l))
-      .map(l => l.replace(/^[•\-*]\s*/, '').trim());
+   // --- extract bullets (ignore anything after "Citations" or "Sources")
+let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources)\s*:?\s*/i.test(l));
+if (endIdx === -1) endIdx = lines.length;
+
+const bullets = lines
+  .slice(0, endIdx)
+  .filter(l => /^[•\-*]\s/.test(l))
+  .map(l => l.replace(/^[•\-*]\s*/, '').trim());
 
     // --- extract sources/citations ---
     const sources = [];
