@@ -11,6 +11,7 @@
 <div class="pulse-widget">
   <div class="widget-header">
     <div class="widget-title">Portfolio Pulse : <span class="date-display">MM/DD/YYYY</span></div>
+    <button id="generateBtn" class="generate-btn">Generate Digest</button>
   </div>
 
   <div class="section-header">Articles For You</div>
@@ -22,33 +23,33 @@
       <span class="status-dot"></span>
       <span class="status-text">Active</span>
     </div>
-</div>
-    
+    <span class="last-updated">Last Update: xxxx mm/dd/yyyy, hh:mm:ss</span>
   </div>
+</div>
 
-  <div class="settings-modal" id="settingsModal" style="display: none;">
-    <div class="settings-content">
-      <div class="settings-header">Settings</div>
-      
-      <div class="setting-item">
-        <label>Update Frequency</label>
-        <select id="frequency">
-          <option value="manual">Manual Only</option>
-          <option value="1x">1x Daily (9am)</option>
-          <option value="2x">2x Daily (9am, 5pm)</option>
-          <option value="3x">3x Daily (8am, 2pm, 8pm)</option>
-        </select>
-      </div>
-      
-      <div class="settings-actions">
-        <button class="btn-cancel" id="cancelSettings">Cancel</button>
-        <button class="btn-save" id="saveSettings">Save</button>
-      </div>
+<div class="settings-modal" id="settingsModal" style="display: none;">
+  <div class="settings-content">
+    <div class="settings-header">Settings</div>
+    
+    <div class="setting-item">
+      <label>Update Frequency</label>
+      <select id="frequency">
+        <option value="manual">Manual Only</option>
+        <option value="1x">1x Daily (9am)</option>
+        <option value="2x">2x Daily (9am, 5pm)</option>
+        <option value="3x">3x Daily (8am, 2pm, 8pm)</option>
+      </select>
+    </div>
+    
+    <div class="settings-actions">
+      <button class="btn-cancel" id="cancelSettings">Cancel</button>
+      <button class="btn-save" id="saveSettings">Save</button>
     </div>
   </div>
+</div>
 
-  <script src="js/config.js"></script>
-  <script src="js/vertesia-api.js"></script>
-  <script src="js/widget.js"></script>
+<script src="js/config.js"></script>
+<script src="js/vertesia-api.js"></script>
+<script src="js/widget.js"></script>
 </body>
 </html>
