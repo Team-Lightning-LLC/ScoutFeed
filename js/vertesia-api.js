@@ -47,7 +47,7 @@ class VertesiaAPI {
   }
 
   // Load all documents from API
-  async loadAllDocuments() {
+ await vertesiaAPI.loadDocuments();
     try {
       console.log('Loading all documents...');
 
