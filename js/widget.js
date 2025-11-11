@@ -1,17 +1,35 @@
-// widget.js — Portfolio Pulse (single-tab, all articles → News)
+// widget.js — Portfolio Pulse (single-tab, strict micro-article parsing, capped results)
 
 class PulseWidgetController {
   constructor() {
-    this.digest = null;
     this.isGenerating = false;
+    this.maxItems = 12; // show at most N cards on load
     this.init();
   }
 
   /* =============== LIFECYCLE =============== */
   init() {
     this.setupEventListeners();
+    this.hideOtherTabs();          // ensure News-only UX even if HTML still has extra tabs
     this.loadLatestDigest();
     setInterval(() => this.loadLatestDigest(), 30_000);
+  }
+
+  hideOtherTabs() {
+    // Hide non-News tabs/panels if they exist in the HTML
+    ['considerations','opportunities','sources'].forEach(id => {
+      const btn   = document.querySelector(`.tab-btn[data-tab="${id}"]`);
+      const panel = document.getElementById(id);
+      if (btn)   btn.style.display   = 'none';
+      if (panel) panel.style.display = 'none';
+    });
+    // Force News active
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === 'news');
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => {
+      p.classList.toggle('active', p.id === 'news');
+    });
   }
 
   setupEventListeners() {
@@ -30,7 +48,7 @@ class PulseWidgetController {
     });
     generateBtn?.addEventListener('click', () => this.generateDigest());
 
-    // Expand / collapse cards
+    // Expand / collapse
     document.addEventListener('click', (e) => {
       const header = e.target.closest('.headline-header');
       if (!header) return;
@@ -71,22 +89,17 @@ class PulseWidgetController {
       // newest first
       objects.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
 
-      // choose latest object with "digest" in name/title
-      const candidates = objects.filter(o => {
-        const hay = `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase();
-        return hay.includes('digest');
-      });
-
-      if (!candidates.length) {
+      // pick latest object with "digest" in name or title
+      const latest = objects.find(o => (`${o.name || ''} ${o.properties?.title || ''}`).toLowerCase().includes('digest'));
+      if (!latest) {
         this.updateStatus('No digests', false);
         this.showEmptyState('No digests found.');
         return;
       }
 
-      const latest = candidates[0];
       const digestObject = await vertesiaAPI.getObject(latest.id);
 
-      // content extraction
+      // content extraction (inline string or download file; PDF-aware)
       const src = digestObject?.content?.source;
       if (!src) throw new Error('No content found in digest object');
 
@@ -102,16 +115,16 @@ class PulseWidgetController {
         throw new Error('Digest content is empty or unreadable');
       }
 
-      const parsed = this.parseDigest(content);            // returns { title, items[] }
-      const newsCards = this.flattenAllToNews(parsed);     // → [{headline, bullets, label}]
-
-      if (!newsCards.length) {
+      const microArticles = this.parseMicroArticles(content); // [{title, bullets, body}]
+      if (!microArticles.length) {
         this.showEmptyState('Digest loaded but no items found. Check formatting.');
         this.updateStatus('No items', false);
         return;
       }
 
-      this.renderNews(newsCards);
+      // limit items for a sane viewport
+      const limited = microArticles.slice(0, this.maxItems);
+      this.renderNews(limited);
       this.updateStatus('Active', true);
 
       // timestamp
@@ -125,7 +138,6 @@ class PulseWidgetController {
         footer.appendChild(ts);
       }
       if (ts) ts.textContent = `Updated ${this.getRelativeTime(new Date(latest.updated_at || latest.created_at))}`;
-
     } catch (err) {
       console.error('Load error:', err);
       this.updateStatus('Error loading', false);
@@ -133,7 +145,7 @@ class PulseWidgetController {
     }
   }
 
-  // Download text; supports PDFs via pdf.js
+  // download text; supports PDFs via pdf.js
   async _downloadTextSmart(fileRef) {
     let urlData = null;
     if (typeof vertesiaAPI.getDownloadUrl === 'function') {
@@ -206,67 +218,49 @@ class PulseWidgetController {
     });
   }
 
-  /* =============== PARSING =============== */
-  parseDigest(raw) {
+  /* =============== STRICT MICRO-ARTICLE PARSER =============== */
+  parseMicroArticles(raw) {
     const text = this._normalizeText(raw);
     const lines = text.split('\n');
 
-    // Header detection: markdown headers or a strong line before bullets
-    const headerIdx = [];
+    // A line is a header iff it matches one of these:
+    const isHeader = (L) =>
+      /^#{1,3}\s+.+/.test(L) ||           // Markdown: #, ##, ###
+      /^\*\*.+\*\*$/.test(L) ||           // Bold: **Headline**
+      /^[A-Z][^:]{2,80}:\s+.+$/.test(L);  // Title: Subtitle
+
+    // Collect header indices
+    const idx = [];
     for (let i = 0; i < lines.length; i++) {
       const L = lines[i].trim();
-      if (!L) continue;
-      if (/^#{1,3}\s+/.test(L)) { headerIdx.push(i); continue; }
-      // "bold-ish" lines (often **Headline**)
-      if (/^\*\*.+\*\*$/.test(L)) { headerIdx.push(i); continue; }
-      // catch headline followed by bullets
-      let ahead = false, seen = 0;
-      for (let k = 1; k <= 8 && i + k < lines.length; k++) {
-        const t = lines[i + k].trim();
-        if (!t) continue; seen++;
-        if (this._isBulletLine(t)) { ahead = true; break; }
-        if (seen >= 5) break;
-      }
-      if (ahead) headerIdx.push(i);
+      if (isHeader(L)) idx.push(i);
     }
 
-    // If still nothing, chunk by blank lines
-    if (!headerIdx.length) {
-      const chunks = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
-      return {
-        title: 'Portfolio Digest',
-        items: chunks.map(ch => ({
-          topic: ch.split('\n')[0] || 'Update',
-          headline: ch.split('\n')[0] || 'Update',
-          body: ch
-        }))
-      };
-    }
+    // If no clear headers, bail with zero (avoid “every line” behavior)
+    if (!idx.length) return [];
 
+    // Build sections
     const sections = [];
-    for (let h = 0; h < headerIdx.length; h++) {
-      const start = headerIdx[h];
-      const end = (h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length);
-      let headline = lines[start].replace(/^#{1,3}\s+/, '').replace(/^\*\*|\*\*$/g, '').trim();
-      let topic = headline;
-      const m = headline.match(/^([^:]{2,80}):\s*(.+)$/);
-      if (m) { topic = m[1].trim(); headline = m[2].trim(); }
-      const body = lines.slice(start + 1, end).join('\n').trim();
-      sections.push({ topic, headline, body });
+    for (let h = 0; h < idx.length; h++) {
+      const start = idx[h];
+      const end = h + 1 < idx.length ? idx[h + 1] : lines.length;
+      let title = lines[start].trim();
+      title = title.replace(/^#{1,3}\s+/, '').replace(/^\*\*|\*\*$/g, '').trim();
+      sections.push({
+        title,
+        body: lines.slice(start + 1, end).join('\n').trim()
+      });
     }
 
-    // Normalize to items structure used downstream
-    const items = sections.map(sec => ({
-      ticker: null,                 // ignored in single-tab mode
-      name: sec.topic,
-      exposure: 0,
-      news: [{ headline: sec.headline, bullets: this._extractBullets(sec.body), body: sec.body }],
-      considerations: [],
-      opportunities: [],
-      sources: []
-    }));
-
-    return { title: 'Portfolio Digest', items };
+    // Convert to renderable items
+    return sections.map(sec => {
+      const bullets = this._extractBullets(sec.body);
+      return {
+        title: sec.title,
+        bullets: bullets.length ? bullets : this._fallbackParagraphs(sec.body),
+        body: sec.body
+      };
+    }).filter(x => x.title && x.bullets.length);
   }
 
   _normalizeText(s) {
@@ -282,20 +276,17 @@ class PulseWidgetController {
       .replace(/\n{3,}/g, '\n\n');
   }
 
-  _isBulletLine(line) { return /^[•\-*]\s+/.test(line) || /^\d+\.\s+/.test(line); }
-
   _extractBullets(body) {
-    const raw = (body || '').split('\n')
+    return (body || '').split('\n')
       .map(l => l.trim())
       .filter(l => /^([•\-*]|\d+\.)\s+/.test(l))
       .map(l => l.replace(/^([•\-*]|\d+\.)\s+/, '').trim());
+  }
 
-    // if no explicit bullets, use paragraphs as a single “bullet-like” entry
-    if (!raw.length) {
-      const p = (body || '').split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
-      return p.length ? p : [];
-    }
-    return raw;
+  _fallbackParagraphs(body) {
+    const paras = (body || '').split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+    // Take first paragraph as a single “summary” bullet to avoid flooding UI
+    return paras.length ? [paras[0]] : [];
   }
 
   /* =============== RENDER (NEWS ONLY) =============== */
@@ -304,40 +295,23 @@ class PulseWidgetController {
     if (el) el.innerHTML = `<div class="empty-state">${message}</div>`;
   }
 
-  flattenAllToNews(parsed) {
-    const out = [];
-    (parsed.items || []).forEach(item => {
-      (item.news || []).forEach(n => {
-        out.push({
-          headline: n.headline || item.name || 'Update',
-          bullets: n.bullets || [],
-          label: item.name || ''
-        });
-      });
-      // include any “considerations/opportunities” as plain news lines too (flatten)
-      (item.considerations || []).forEach(n => out.push({ headline: n.headline, bullets: n.bullets || [], label: item.name || '' }));
-      (item.opportunities  || []).forEach(n => out.push({ headline: n.headline, bullets: n.bullets || [], label: item.name || '' }));
-    });
-    return out;
-  }
-
-  renderNews(list) {
+  renderNews(items) {
     const el = document.getElementById('newsList');
     if (!el) return;
-    if (!list.length) { this.showEmptyState('No items'); return; }
 
-    el.innerHTML = list.map((item, i) => `
+    el.innerHTML = items.map((item, i) => `
       <div class="headline-item" data-index="${i}">
         <div class="headline-header">
-          <div class="headline-text">${this._escape(item.headline)}</div>
+          <div class="headline-text">${this._escape(item.title)}</div>
           <div class="headline-toggle">▼</div>
         </div>
         <div class="headline-details">
-          ${item.label ? `<div class="headline-ticker" style="margin-bottom:8px;">${this._escape(item.label)}</div>` : ''}
           ${
             item.bullets?.length
-              ? `<ul class="headline-bullets">${item.bullets.map(b => `<li>${this._escape(b)}</li>`).join('')}</ul>`
-              : '<div style="font-size:13px;color:var(--text);line-height:1.5;">(No bullets)</div>'
+              ? `<ul class="headline-bullets">
+                   ${item.bullets.slice(0, 6).map(b => `<li>${this._escape(b)}</li>`).join('')}
+                 </ul>`
+              : '<div style="font-size:13px;color:var(--text);line-height:1.5;">(No details)</div>'
           }
         </div>
       </div>
