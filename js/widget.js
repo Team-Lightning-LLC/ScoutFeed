@@ -73,8 +73,8 @@ class PulseWidgetController {
     this.updateStatus('Generating...', false);
 
     try {
-      // Generate digest via API
-      await vertesiaAPI.generateDigest();
+      // Use YOUR executeAsync method
+      await vertesiaAPI.executeAsync({ Task: 'begin' });
       
       console.log('Pulse generation started. Waiting 5 minutes...');
       
@@ -101,8 +101,9 @@ class PulseWidgetController {
     try {
       console.log('=== Loading all objects ===');
       
-      // Load documents from API
-      const allDocuments = await vertesiaAPI.loadDocuments();
+      // Use YOUR loadAllObjects method
+      const response = await vertesiaAPI.loadAllObjects(1000);
+      const allDocuments = response.objects || [];
       
       console.log(`Fetched ${allDocuments.length} total objects`);
       
