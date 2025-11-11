@@ -1,9 +1,10 @@
-// vertesia-api.js — Stable MVP version
+// vertesia-api.js — final stable version
+// Compatible with widget.js (PulseWidget) expectations
 
 class VertesiaAPI {
   constructor() {
     this.baseURL = CONFIG.VERTESIA_BASE_URL;
-    this.apiKey = CONFIG.VERTESIA_API_KEY;
+    this.apiKey  = CONFIG.VERTESIA_API_KEY;
   }
 
   _headers() {
@@ -23,14 +24,18 @@ class VertesiaAPI {
       : res.text();
   }
 
-  async executeAsync(data = { Task: 'begin' }) {
-    return this.call('/execute/async', {
+  // ---------- Core Methods ----------
+  async executeAsync(interactionData = { Task: 'begin' }) {
+    return await this.call('/execute/async', {
       method: 'POST',
       body: JSON.stringify({
         type: 'conversation',
-        interaction: CONFIG.INTERACTION_NAME,
-        data,
-        config: { environment: CONFIG.ENVIRONMENT_ID, model: CONFIG.MODEL }
+        interaction: 'Pulse',
+        data: interactionData,
+        config: {
+          environment: CONFIG.ENVIRONMENT_ID,
+          model: CONFIG.MODEL
+        }
       })
     });
   }
@@ -56,6 +61,7 @@ class VertesiaAPI {
     const file = typeof fileRef === 'string'
       ? fileRef
       : (fileRef?.file || fileRef?.store || fileRef?.path || fileRef?.key);
+
     if (!file) throw new Error('getFileContent: invalid file reference');
 
     const { url } = await this.getDownloadUrl(file, format);
@@ -64,10 +70,28 @@ class VertesiaAPI {
     return res.text();
   }
 
+  // ---------- Utility ----------
+  transformDocument(obj) {
+    let title = obj.name || 'Untitled';
+    ['DeepResearch_', 'Digest:', 'DEEP RESEARCH:', 'Research_']
+      .forEach(p => { if (title.startsWith(p)) title = title.substring(p.length).trim(); });
+    title = title.replace(/[_-]/g, ' ').trim();
+
+    return {
+      id: obj.id,
+      title,
+      created_at: obj.created_at || obj.updated_at || new Date().toISOString(),
+      content_source: obj.content?.source,
+      when: this.formatDate(obj.created_at || obj.updated_at)
+    };
+  }
+
   formatDate(s) {
     if (!s) return 'Recent';
     try {
-      return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return new Date(s).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      });
     } catch {
       return 'Recent';
     }
