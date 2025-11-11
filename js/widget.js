@@ -1,4 +1,4 @@
-// widget.js — Portfolio Pulse (rewritten, robust, single-file controller)
+// widget.js — Portfolio Pulse (robust, newest "digest" discovery, PDF/MD aware)
 
 class PulseWidgetController {
   constructor() {
@@ -77,24 +77,44 @@ class PulseWidgetController {
       const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
 
       // newest first
-      objects.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      objects.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
 
-      // pick digest objects by name
-      const digests = objects.filter(o => {
-        const n = (o.name || '').toLowerCase();
-        return n.includes('digest:') || n.includes('scout pulse:');
+      // === Digest discovery (simple + strict) ===
+      // If it has the word "digest" anywhere in name OR properties.title → it's a candidate
+      const candidates = objects.filter(o => {
+        const hay = `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase();
+        return hay.includes('digest');
       });
 
-      if (digests.length === 0) {
-        this.showEmptyState('No digests found. Click "Generate Digest" to create one.');
+      if (candidates.length === 0) {
+        console.warn('[Pulse] No digest-like objects found. Available names:', objects.map(o => o.name));
         this.updateStatus('No digests yet', false);
+        this.showEmptyState('No digests found.');
         return;
       }
 
-      const latest = digests[0];
-      const obj = await vertesiaAPI.getObject(latest.id);
+      const latestDigest = candidates[0]; // already sorted newest first
+      console.log('[Pulse] Using digest:', latestDigest.name, latestDigest.id);
 
-      const content = await this._fetchContentFromSource(obj?.content?.source);
+      const digestObject = await vertesiaAPI.getObject(latestDigest.id);
+
+      // -------- robust content extraction (PDF or text) --------
+      let content;
+      const src = digestObject?.content?.source;
+      if (!src) throw new Error('No content found in digest object');
+
+      if (typeof src === 'string' && !src.startsWith('gs://') && !src.startsWith('s3://')) {
+        // inline text
+        content = src;
+      } else {
+        // stored file: normalize to a fileRef and download as text (PDF-aware)
+        const fileRef = typeof src === 'string' ? src : (src.file || src.store || src.path || src.key);
+        if (!fileRef) throw new Error('Unknown file reference shape in content.source');
+        content = await this._downloadTextSmart(fileRef);
+      }
+
+      console.log('[Pulse] sample text →', content.slice(0, 800));
+
       if (!content || content.trim().length < 20) {
         throw new Error('Digest content is empty or unreadable');
       }
@@ -121,7 +141,7 @@ class PulseWidgetController {
         ts.style.color = 'var(--text-muted)';
         footer.appendChild(ts);
       }
-      if (ts) ts.textContent = `Updated ${this.getRelativeTime(new Date(latest.created_at))}`;
+      if (ts) ts.textContent = `Updated ${this.getRelativeTime(new Date(latestDigest.updated_at || latestDigest.created_at))}`;
     } catch (err) {
       console.error('Load error:', err);
       this.updateStatus('Error loading', false);
@@ -129,69 +149,168 @@ class PulseWidgetController {
     }
   }
 
-  // Robust content fetcher (inline text, storage URI strings, or object refs)
-  async _fetchContentFromSource(src) {
-    if (!src) return null;
-
-    // inline text
-    if (typeof src === 'string' && !src.startsWith('gs://') && !src.startsWith('s3://')) {
-      return src;
+  // Download text from a storage ref, auto-detecting PDFs/markdown
+  async _downloadTextSmart(fileRef) {
+    // Try download-url endpoint first (preferred)
+    let urlData = null;
+    if (typeof vertesiaAPI.getDownloadUrl === 'function') {
+      urlData = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
+    } else {
+      // direct call if helper not present
+      const resp = await fetch(`${CONFIG.VERTESIA_BASE_URL}/objects/download-url`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.VERTESIA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ file: fileRef, format: 'original' })
+      });
+      if (!resp.ok) throw new Error(`download-url failed: ${resp.status}`);
+      urlData = await resp.json();
     }
 
-    // string storage URI
-    if (typeof src === 'string') {
-      return await vertesiaAPI.getFileContent(src);
+    const res = await fetch(urlData.url);
+    if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+
+    const ctype = (res.headers.get('content-type') || '').toLowerCase();
+
+    // text-like → return as text
+    if (ctype.includes('text/') || ctype.includes('json') || ctype.includes('markdown') || ctype.includes('csv')) {
+      return await res.text();
     }
 
-    // object ref: accept {file}|{store}|{path}|{key}
-    const fileRef = src.file || src.store || src.path || src.key;
-    if (!fileRef) throw new Error('Unknown file reference shape in content.source');
-    return await vertesiaAPI.getFileContent(fileRef);
+    const buf = await res.arrayBuffer();
+    if (this._looksLikePdf(buf, ctype)) {
+      return await this._pdfArrayBufferToText(buf);
+    }
+
+    // Fallback to UTF-8 text decode
+    try {
+      return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf));
+    } catch {
+      throw new Error('Unsupported digest content format');
+    }
+  }
+
+  _looksLikePdf(buf, ctype) {
+    if (ctype.includes('pdf')) return true;
+    const bytes = new Uint8Array(buf.slice(0, 5));
+    // “%PDF-”
+    return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d;
+  }
+
+  // Use pdf.js to extract text from a PDF
+  async _pdfArrayBufferToText(buf) {
+    await this._ensurePdfJs();
+    const loadingTask = window.pdfjsLib.getDocument({ data: buf });
+    const pdf = await loadingTask.promise;
+
+    let out = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const strings = content.items.map(it => ('str' in it ? it.str : (it?.text || '')));
+      out += strings.join(' ') + '\n\n';
+    }
+    return out
+      .replace(/\u00AD/g, '')      // soft hyphen
+      .replace(/-\s+\n/g, '')      // hyphen line wraps
+      .replace(/\s+\n/g, '\n')
+      .trim();
+  }
+
+  async _ensurePdfJs() {
+    if (window.pdfjsLib) return;
+    const core = document.createElement('script');
+    core.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    core.defer = true;
+    const workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    await new Promise((resolve, reject) => {
+      core.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc; resolve(); } catch (e) { reject(e); } };
+      core.onerror = reject;
+      document.head.appendChild(core);
+    });
   }
 
   /* ===================== PARSING ===================== */
-  // Opinionated but tolerant parser for your digest format
   parseDigest(raw) {
     const text = this._normalizeText(raw);
 
-    // Title
+    // Title (best-effort)
     const title =
       (text.match(/^\s*(?:Scout Pulse|Portfolio Digest|Digest)\s*:\s*([^\n]+)$/mi)?.[1] ||
-       text.match(/^\s*Title\s*:\s*([^\n]+)$/mi)?.[1] ||
-       'Portfolio Digest').trim();
+       text.match(/^\s*Title\s*:\s*([^\n]+)$/mi)?.[1] || 'Portfolio Digest').trim();
 
-    // Split into sections of: TOPIC: Headline \n body
-    const sectionRegex = /^\s*([A-Z][A-Za-z0-9 /&\-\u00C0-\u024F]+)\s*:\s*([^\n]+)\n([\s\S]*?)(?=^\s*[A-Z][A-Za-z0-9 /&\-\u00C0-\u024F]+\s*:\s*[^\n]+\n|$)/gm;
+    const lines = text.split('\n');
+
+    // Find headers: markdown headers OR headline followed by bullets soon after
+    const headerIdx = [];
+    for (let i = 0; i < lines.length; i++) {
+      const L = lines[i].trim();
+      if (!L) continue;
+      if (/^#{1,3}\s+/.test(L)) { headerIdx.push(i); continue; }
+      if (this._isBulletLine(L) || /^sources?\s*:$/i.test(L)) continue;
+      let bulletAhead = false, seen = 0;
+      for (let k = 1; k <= 8 && i + k < lines.length; k++) {
+        const t = lines[i + k].trim();
+        if (!t) continue; seen++;
+        if (this._isBulletLine(t)) { bulletAhead = true; break; }
+        if (seen >= 5) break;
+      }
+      if (bulletAhead) headerIdx.push(i);
+    }
+
+    if (headerIdx.length === 0) {
+      for (let i = 0; i < lines.length; i++) {
+        if (/^[A-Z][^:]{2,80}:\s*[^\n]+$/.test(lines[i])) headerIdx.push(i);
+      }
+    }
+
+    // Fallback: chunk by blank lines if still empty
+    if (headerIdx.length === 0) {
+      const chunks = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+      const items = [];
+      for (const ch of chunks) {
+        const firstLine = ch.split('\n')[0] || 'Update';
+        const bullets = this._extractBullets(ch);
+        const ticker = this._inferTicker(firstLine, ch) || this._inferTicker(ch, ch);
+        if (!bullets.length || !ticker || ['QUANTUM','NUCLEAR','AI','MARKET'].includes(ticker)) continue;
+        const exposure = this._extractExposure(ch);
+        const category = this._categorize(firstLine);
+        let t = items.find(i => i.ticker === ticker);
+        if (!t) t = items[items.push({ ticker, name: firstLine, exposure, news: [], considerations: [], opportunities: [], sources: [] })-1];
+        const entry = { headline: firstLine, bullets };
+        if (category === 'considerations') t.considerations.push(entry); else if (category === 'opportunities') t.opportunities.push(entry); else t.news.push(entry);
+      }
+      return { title, items };
+    }
+
+    const sections = [];
+    for (let h = 0; h < headerIdx.length; h++) {
+      const start = headerIdx[h];
+      const end = (h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length);
+      let headline = lines[start].replace(/^#{1,3}\s+/, '').trim();
+      let topic = headline;
+      const m = headline.match(/^([^:]{2,80}):\s*(.+)$/);
+      if (m) { topic = m[1].trim(); headline = m[2].trim(); }
+      const body = lines.slice(start + 1, end).join('\n').trim();
+      sections.push({ topic, headline, body });
+    }
 
     const items = [];
-    let m, index = 0;
-    while ((m = sectionRegex.exec(text)) !== null) {
-      index++;
-      const topic    = m[1].trim();
-      const headline = this._cleanLine(m[2]);
-      const body     = m[3].trim();
-
-      const ticker   = this._inferTicker(topic, body);
+    for (const sec of sections) {
+      const ticker = this._inferTicker(sec.topic, sec.body) || this._inferTicker(sec.headline, sec.body);
       if (!ticker || ['QUANTUM','NUCLEAR','AI','MARKET'].includes(ticker)) continue;
-
-      const exposure = this._extractExposure(body);
-      const bullets  = this._extractBullets(body);
-      const sources  = this._extractSources(body);
-      const category = this._categorize(headline);
-
-      // upsert ticker bucket
+      const exposure = this._extractExposure(sec.body);
+      const bullets  = this._extractBullets(sec.body);
+      const sources  = this._extractSources(sec.body);
+      const category = this._categorize(sec.headline);
+      if (!bullets.length) continue;
       let t = items.find(i => i.ticker === ticker);
-      if (!t) {
-        t = { ticker, name: topic, exposure, news: [], considerations: [], opportunities: [], sources: [] };
-        items.push(t);
-      }
-      const entry = { headline, bullets };
-      if (category === 'considerations') t.considerations.push(entry);
-      else if (category === 'opportunities') t.opportunities.push(entry);
-      else t.news.push(entry);
-
-      // merge sources (dedupe by url)
-      for (const s of sources) if (!t.sources.find(x => x.url === s.url)) t.sources.push(s);
+      if (!t) { t = { ticker, name: sec.topic, exposure, news: [], considerations: [], opportunities: [], sources: [] }; items.push(t); }
+      const entry = { headline: sec.headline, bullets };
+      if (category === 'considerations') t.considerations.push(entry); else if (category === 'opportunities') t.opportunities.push(entry); else t.news.push(entry);
+      sources.forEach(s => { if (!t.sources.find(x => x.url === s.url)) t.sources.push(s); });
     }
 
     return { title, items };
@@ -199,10 +318,9 @@ class PulseWidgetController {
 
   _normalizeText(s) {
     return s
-      // PDF quirks: remove hard hyphen line-breaks and normalize quotes/dashes/bullets
       .replace(/\r/g, '')
-      .replace(/-\n/g, '')                       // dehyphenate line wraps
-      .replace(/\u00AD/g, '')                    // soft hyphen
+      .replace(/-\n/g, '')
+      .replace(/\u00AD/g, '')
       .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
       .replace(/[–—]/g, '-')
       .replace(/[•▪●·]/g, '•')
@@ -211,9 +329,7 @@ class PulseWidgetController {
       .replace(/\n{3,}/g, '\n\n');
   }
 
-  _cleanLine(s) {
-    return s.replace(/\s+/g, ' ').trim();
-  }
+  _isBulletLine(line) { return /^[•\-*]\s+/.test(line) || /^\d+\.\s+/.test(line); }
 
   _inferTicker(topic, body) {
     const map = {
@@ -228,49 +344,42 @@ class PulseWidgetController {
       'ai infrastructure':'AI',
       'market dynamics':'MARKET'
     };
-    const t = topic.toLowerCase();
+    const t = (topic || '').toLowerCase();
     for (const [k,v] of Object.entries(map)) if (t.includes(k)) return v;
-
-    // fallback: find uppercase ticker in Market Context or parenthetical
-    const mc = body.match(/Market Context.*?\b([A-Z]{2,5})\b/);
+    const mc = (body || '').match(/Market Context.*?\b([A-Z]{2,5})\b/);
     if (mc) return mc[1];
-    const paren = body.match(/\(([A-Z]{2,5})\)/);
+    const paren = (body || '').match(/\(([A-Z]{2,5})\)/);
     if (paren) return paren[1];
     return null;
   }
 
   _extractExposure(body) {
-    const m = body.match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
+    const m = (body || '').match(/([\d.]+)%\s+(?:portfolio|of portfolio|exposure)/i);
     return m ? parseFloat(m[1]) : 0;
   }
 
   _extractBullets(body) {
-    // support bullets starting with "•", "-", "*"
-    return body.split('\n')
+    return (body || '').split('\n')
       .map(l => l.trim())
-      .filter(l => /^([•\-\*])\s+/.test(l))
-      .map(l => l.replace(/^([•\-\*])\s+/, '').trim());
+      .filter(l => /^([•\-*]|\d+\.)\s+/.test(l))
+      .map(l => l.replace(/^([•\-*]|\d+\.)\s+/, '').trim());
   }
 
   _extractSources(body) {
-    // capture citations/sources block until next blank line or section marker
-    const m = body.match(/^(?:Citations?|Sources?)\s*:\s*([\s\S]*?)$/mi);
-    if (!m) return [];
-    return m[1]
-      .split('\n')
-      .map(l => l.trim())
-      .filter(Boolean)
-      .map(line => {
-        const url = (line.match(/(https?:\/\/[^\s]+)/) || [])[1];
-        if (!url) return null;
-        const title = line.replace(url, '').trim().replace(/^[-–—:\s"]+|["\s]+$/g, '') || 'Source';
-        return { title, url };
-      })
-      .filter(Boolean);
+    const out = [];
+    const m = (body || '').match(/^(?:Citations?|Sources?)\s*:\s*([\s\S]*?)$/mi);
+    if (!m) return out;
+    m[1].split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+      const url = (line.match(/(https?:\/\/[^\s]+)/) || [])[1];
+      if (!url) return;
+      const title = line.replace(url, '').trim().replace(/^[\-–—:\s"]+|["\s]+$/g, '') || 'Source';
+      out.push({ title, url });
+    });
+    return out;
   }
 
   _categorize(headline) {
-    const h = headline.toLowerCase();
+    const h = (headline || '').toLowerCase();
     if (/(concern|risk|unsustainable|warning|faces|challenge|collides|volatile|extreme|bubble|caution|test|headwind|regulatory)/.test(h)) return 'considerations';
     if (/(opportunit|power|dominance|renaissance|lead|momentum|strategic|explosive|record|growth|tailwind|beat|surge)/.test(h)) return 'opportunities';
     return 'news';
