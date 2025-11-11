@@ -47,7 +47,7 @@ class VertesiaAPI {
   }
 
   // Load all documents from API
- await vertesiaAPI.loadDocuments();
+  async loadDocuments() {  // ← FIXED: Proper method definition
     try {
       console.log('Loading all documents...');
 
@@ -106,7 +106,7 @@ class VertesiaAPI {
       area: obj.properties?.capability || 'Research',
       topic: obj.properties?.framework || 'General',
       created_at: obj.created_at || obj.properties?.generated_at || new Date().toISOString(),
-      content_source: obj.content?.source,  // ← CRITICAL: This stores the content reference
+      content_source: obj.content?.source,
       when: this.formatDate(obj.created_at || obj.properties?.generated_at),
       modifiers: obj.properties?.modifiers || null,
       parent_document_id: obj.properties?.parent_document_id || null
@@ -131,9 +131,8 @@ class VertesiaAPI {
 
   // Get most recent digest (filter from all docs)
   async getLatestDigest() {
-    const allDocs = await this.loadAllDocuments();
+    const allDocs = await this.loadDocuments();  // ← Changed to match method name
     
-    // Filter for documents starting with "Digest:"
     const digests = allDocs.filter(doc => 
       doc.title && (doc.title.toLowerCase().includes('digest') || doc.area === 'Pulse')
     );
@@ -144,7 +143,6 @@ class VertesiaAPI {
       return null;
     }
     
-    // Return most recent
     return digests[0];
   }
 
@@ -155,7 +153,6 @@ class VertesiaAPI {
         throw new Error('No content source found');
       }
 
-      // Step 1: Get download URL
       const downloadResponse = await fetch(`${CONFIG.VERTESIA_BASE_URL}/objects/download-url`, {
         method: 'POST',
         headers: {
@@ -174,7 +171,6 @@ class VertesiaAPI {
 
       const downloadData = await downloadResponse.json();
 
-      // Step 2: Fetch content from signed URL
       const contentResponse = await fetch(downloadData.url);
       if (!contentResponse.ok) {
         throw new Error(`Failed to download content: ${contentResponse.statusText}`);
