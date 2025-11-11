@@ -84,15 +84,29 @@ class PulseWidget {
       if (!digestObj) throw new Error('No digest found');
 
       const object = await vertesiaAPI.getObject(digestObj.id);
-      const src = object?.content?.source;
-      if (!src) throw new Error('No content source');
+const src = object?.content?.source;
+if (!src) throw new Error('No content source');
 
-      let text;
-      if (typeof src === 'string') text = src;
-      else {
-        const fileRef = src.file || src.store || src.path || src.key;
-        text = await this.downloadAsText(fileRef);
-      }
+let text;
+
+// Handles all storage URIs and inline text
+if (typeof src === 'string') {
+  if (src.startsWith('gs://') || src.startsWith('s3://')) {
+    console.log('[Pulse] Detected remote source:', src);
+    text = await this.downloadAsText(src);
+  } else {
+    text = src;
+  }
+} else if (typeof src === 'object') {
+  const fileRef = src.file || src.store || src.path || src.key;
+  console.log('[Pulse] Downloading from structured source:', fileRef);
+  text = await this.downloadAsText(fileRef);
+}
+
+if (!text || text.trim().length < 20) {
+  throw new Error('Digest text empty after retrieval');
+}
+
 
       if (!text || text.trim().length < 20) throw new Error('Empty digest text');
       this.digest = this.parseDigest(text);
