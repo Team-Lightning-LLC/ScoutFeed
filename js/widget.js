@@ -126,10 +126,17 @@ class PulseWidget {
     return res.text();
   }
 
-  /* ===== Parse (New Structured Article Format) ===== */
-/* ===== Parse (New Structured Article Format + Bullet Detection) ===== */
+  /* ===== Parse (Structured Articles + Bullet Detection + Cleanup) ===== */
 parseDigest(raw) {
-  const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
+  // Clean stray formatting characters and soft hyphens
+  let text = raw
+    .replace(/\r/g, '')
+    .replace(/\u00AD/g, '')
+    .replace(/^#+\s*/gm, '')       // remove markdown headers
+    .replace(/#+(?=\s|$)/g, '')    // remove rogue trailing hashes
+    .replace(/###+/g, '')          // remove isolated ###
+    .trim();
+
   const articleBlocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
   const cards = [];
 
@@ -143,7 +150,7 @@ parseDigest(raw) {
       ? contentsMatch[0].replace(/Contents\s*\d*/i, '').trim()
       : '';
 
-    /* 🟦 Convert inline dash-bullets (- **Something:** ...) into proper list items */
+    // --- 🟦 Convert inline bullets (- **Header:** ...) into clean <li> items ---
     const bulletLines = contents
       .split('\n')
       .map(l => l.trim())
@@ -151,21 +158,18 @@ parseDigest(raw) {
 
     const formatted = [];
     for (const line of bulletLines) {
-      // Detect either a true list or a "- **Header:**" pattern
       if (/^[-•*]\s*\*\*.+?:/.test(line)) {
         formatted.push(`<li>${this.formatMarkdown(line.replace(/^[-•*]\s*/, '').trim())}</li>`);
       } else if (/^[-•*]\s+/.test(line)) {
         formatted.push(`<li>${this.formatMarkdown(line.replace(/^[-•*]\s*/, '').trim())}</li>`);
       } else {
-        // treat as a normal paragraph
         formatted.push(`<p>${this.formatMarkdown(line)}</p>`);
       }
     }
 
-    // join them into clean readable HTML
     contents = `<ul class="article-contents">${formatted.join('')}</ul>`;
 
-    // Extract "Citations" section
+    // --- Citations ---
     const citations = [];
     const citationsMatch = block.match(/Citations\s*\d*[\s\S]*?(?=(Article\s+\d+|$))/i);
     if (citationsMatch) {
@@ -190,7 +194,6 @@ parseDigest(raw) {
 
   return { title: docTitle, cards };
 }
-
 
   /* ===== Render ===== */
   renderDigest() {
