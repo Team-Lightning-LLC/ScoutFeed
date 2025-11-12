@@ -59,7 +59,7 @@ class PulseWidget {
     this.updateStatus('Generating...', false);
 
     try {
-      await vertesiaAPI.executeAsync({ task: 'begin' });
+      await vertesiaAPI.executeAsync({ Task: 'begin' });
       // Wait 5 min for async completion
       await new Promise(r => setTimeout(r, 5 * 60 * 1000));
       await this.loadLatestDigest();
@@ -81,23 +81,17 @@ class PulseWidget {
     this.updateStatus('Loading...', false);
 
     try {
-const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
-if (!objects.length) throw new Error('No documents found');
+      const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
+      if (!objects.length) throw new Error('No documents found');
 
-// filter only digest-like docs then pick newest
-const candidates = objects.filter(o => {
-  const hay = `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase();
-  return hay.includes('digest');
-});
-if (!candidates.length) throw new Error('No digest found');
+      objects.sort((a, b) =>
+        new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)
+      );
 
-candidates.sort((a, b) =>
-  new Date(b.updated_at || b.created_at || 0) -
-  new Date(a.updated_at || a.created_at || 0)
-);
-const digestObj = candidates[0];
-console.log('[Pulse] Using digest:', digestObj?.name, digestObj?.id, digestObj?.updated_at || digestObj?.created_at);
-
+      const digestObj = objects.find(o =>
+        `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase().includes('digest')
+      );
+      if (!digestObj) throw new Error('No digest found');
 
       // ✅ critical: fetch full object (includes content.source)
       const object = await vertesiaAPI.getObject(digestObj.id);
@@ -115,7 +109,6 @@ console.log('[Pulse] Using digest:', digestObj?.name, digestObj?.id, digestObj?.
       }
 
       if (!text || text.trim().length < 20) throw new Error('Empty digest text');
-console.log('[Pulse] Digest text preview:', (text || '').slice(0, 500));
 
       this.digest = this.parseDigest(text);
       this.digest.created_at = object.created_at || object.updated_at || new Date().toISOString();
@@ -128,112 +121,61 @@ console.log('[Pulse] Digest text preview:', (text || '').slice(0, 500));
     }
   }
 
-async downloadAsText(fileRef) {
-  const { url } = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
-  const res = await fetch(url);
-  const ctype = (res.headers.get('content-type') || '').toLowerCase();
-
-  // Text-like
-  if (ctype.includes('text') || ctype.includes('json') || ctype.includes('markdown')) {
-    return await res.text();
+  async downloadAsText(fileRef) {
+    const urlData = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
+    const res = await fetch(urlData.url);
+    return res.text();
   }
-
-  // Binary → check for PDF
-  const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf.slice(0, 5));
-  const isPDF = [...head].map(b => String.fromCharCode(b)).join('') === '%PDF';
-
-  if (ctype.includes('pdf') || isPDF) {
-    // lazy-load pdf.js once
-    if (!window.pdfjsLib) {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
-      });
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    }
-    const doc = await window.pdfjsLib.getDocument({ data: buf }).promise;
-    let out = '';
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const txt = await page.getTextContent();
-      out += txt.items.map(t => t.str).join(' ') + '\n';
-    }
-    return out.trim();
-  }
-
-  // Generic binary fallback (best effort)
-  return new TextDecoder('utf-8').decode(buf);
-}
-
 
   /* ===== Parse ===== */
-parseDigest(raw) {
-  const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
+  parseDigest(raw) {
+    const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
+    const blocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
+    const cards = [];
 
-  // Support both formats: "Article 1" and "## 1"
-  const blocks = text
-    .split(/(?=^(?:Article\s+\d+|##\s*\d+))/gim)
-    .map(b => b.trim())
-    .filter(Boolean);
+    for (const block of blocks) {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) continue;
+      if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
+      lines.shift();
 
-  const cards = [];
+      let title = 'Untitled Article';
+      const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
+      if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
 
-  for (const block of blocks) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) continue;
-    if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
+      let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
+      if (endIdx === -1) endIdx = lines.length;
 
-    // Remove section header line like "Article 1" or "## 1"
-    if (/^(Article\s+\d+|##\s*\d+)/i.test(lines[0])) lines.shift();
+      const bullets = lines
+        .slice(0, endIdx)
+        .filter(l => /^[•\-*]\s/.test(l))
+        .map(l => l.replace(/^[•\-*]\s*/, '').trim());
 
-    // Extract title
-    let title = 'Untitled Article';
-    const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
-    if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+      const sources = [];
+      const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
+      if (citeBlock) {
+        citeBlock[1]
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l.startsWith('-') || l.startsWith('•'))
+          .forEach(l => {
+            const url = (l.match(/https?:\/\/\S+/) || [])[0];
+            if (!url) return;
+            const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
+            sources.push({ title: t || 'Source', url });
+          });
+      }
 
-    // Extract content up to citations
-    let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
-    if (endIdx === -1) endIdx = lines.length;
-
-    const bullets = lines
-  .slice(0, endIdx)
-  .filter(l =>
-    /^[•\-*]\s/.test(l) ||                     // existing bullet styles
-    /^\d+\.\s/.test(l) ||                     // numbered lists (1. 2. 3.)
-    /^[A-Z][^.?!]{20,}\.$/.test(l)            // long declarative sentences
-  )
-  .map(l => l.replace(/^[•\-*\d.]+\s*/, '').trim());
-
-    // Extract citations
-    const sources = [];
-    const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
-    if (citeBlock) {
-      citeBlock[1]
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l.startsWith('-') || l.startsWith('•'))
-        .forEach(l => {
-          const url = (l.match(/https?:\/\/\S+/) || [])[0];
-          if (!url) return;
-          const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
-          sources.push({ title: t || 'Source', url });
-        });
+      cards.push({ title, bullets, sources });
     }
 
-    cards.push({ title, bullets, sources });
+    const docTitle =
+      text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      'Portfolio Digest';
+
+    return { title: docTitle, cards };
   }
-
-  const docTitle =
-    text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
-    text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
-    'Portfolio Digest';
-
-  return { title: docTitle, cards };
-}
-
 
   /* ===== Render ===== */
   renderDigest() {
