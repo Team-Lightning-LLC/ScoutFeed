@@ -115,6 +115,7 @@ console.log('[Pulse] Using digest:', digestObj?.name, digestObj?.id, digestObj?.
       }
 
       if (!text || text.trim().length < 20) throw new Error('Empty digest text');
+console.log('[Pulse] Digest text preview:', (text || '').slice(0, 500));
 
       this.digest = this.parseDigest(text);
       this.digest.created_at = object.created_at || object.updated_at || new Date().toISOString();
@@ -169,54 +170,66 @@ async downloadAsText(fileRef) {
 
 
   /* ===== Parse ===== */
-  parseDigest(raw) {
-    const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
-    const blocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
-    const cards = [];
+parseDigest(raw) {
+  const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
 
-    for (const block of blocks) {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length < 2) continue;
-      if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
-      lines.shift();
+  // Support both formats: "Article 1" and "## 1"
+  const blocks = text
+    .split(/(?=^(?:Article\s+\d+|##\s*\d+))/gim)
+    .map(b => b.trim())
+    .filter(Boolean);
 
-      let title = 'Untitled Article';
-      const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
-      if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+  const cards = [];
 
-      let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
-      if (endIdx === -1) endIdx = lines.length;
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
+    if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
 
-      const bullets = lines
-        .slice(0, endIdx)
-        .filter(l => /^[•\-*]\s/.test(l))
-        .map(l => l.replace(/^[•\-*]\s*/, '').trim());
+    // Remove section header line like "Article 1" or "## 1"
+    if (/^(Article\s+\d+|##\s*\d+)/i.test(lines[0])) lines.shift();
 
-      const sources = [];
-      const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
-      if (citeBlock) {
-        citeBlock[1]
-          .split('\n')
-          .map(l => l.trim())
-          .filter(l => l.startsWith('-') || l.startsWith('•'))
-          .forEach(l => {
-            const url = (l.match(/https?:\/\/\S+/) || [])[0];
-            if (!url) return;
-            const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
-            sources.push({ title: t || 'Source', url });
-          });
-      }
+    // Extract title
+    let title = 'Untitled Article';
+    const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
+    if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
 
-      cards.push({ title, bullets, sources });
+    // Extract content up to citations
+    let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
+    if (endIdx === -1) endIdx = lines.length;
+
+    const bullets = lines
+      .slice(0, endIdx)
+      .filter(l => /^[•\-*]\s/.test(l))
+      .map(l => l.replace(/^[•\-*]\s*/, '').trim());
+
+    // Extract citations
+    const sources = [];
+    const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
+    if (citeBlock) {
+      citeBlock[1]
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.startsWith('-') || l.startsWith('•'))
+        .forEach(l => {
+          const url = (l.match(/https?:\/\/\S+/) || [])[0];
+          if (!url) return;
+          const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
+          sources.push({ title: t || 'Source', url });
+        });
     }
 
-    const docTitle =
-      text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
-      text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
-      'Portfolio Digest';
-
-    return { title: docTitle, cards };
+    cards.push({ title, bullets, sources });
   }
+
+  const docTitle =
+    text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+    text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+    'Portfolio Digest';
+
+  return { title: docTitle, cards };
+}
+
 
   /* ===== Render ===== */
   renderDigest() {
