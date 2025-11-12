@@ -121,11 +121,46 @@ class PulseWidget {
     }
   }
 
-  async downloadAsText(fileRef) {
-    const urlData = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
-    const res = await fetch(urlData.url);
-    return res.text();
+async downloadAsText(fileRef) {
+  const { url } = await vertesiaAPI.getDownloadUrl(fileRef, 'original');
+  const res = await fetch(url);
+  const ctype = (res.headers.get('content-type') || '').toLowerCase();
+
+  // Text-like
+  if (ctype.includes('text') || ctype.includes('json') || ctype.includes('markdown')) {
+    return await res.text();
   }
+
+  // Binary → check for PDF
+  const buf = await res.arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 5));
+  const isPDF = [...head].map(b => String.fromCharCode(b)).join('') === '%PDF';
+
+  if (ctype.includes('pdf') || isPDF) {
+    // lazy-load pdf.js once
+    if (!window.pdfjsLib) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
+      });
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const doc = await window.pdfjsLib.getDocument({ data: buf }).promise;
+    let out = '';
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const txt = await page.getTextContent();
+      out += txt.items.map(t => t.str).join(' ') + '\n';
+    }
+    return out.trim();
+  }
+
+  // Generic binary fallback (best effort)
+  return new TextDecoder('utf-8').decode(buf);
+}
+
 
   /* ===== Parse ===== */
   parseDigest(raw) {
