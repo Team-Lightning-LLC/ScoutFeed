@@ -81,17 +81,23 @@ class PulseWidget {
     this.updateStatus('Loading...', false);
 
     try {
-      const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
-      if (!objects.length) throw new Error('No documents found');
+const { objects = [] } = await vertesiaAPI.loadAllObjects(1000);
+if (!objects.length) throw new Error('No documents found');
 
-      objects.sort((a, b) =>
-        new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)
-      );
+// filter only digest-like docs then pick newest
+const candidates = objects.filter(o => {
+  const hay = `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase();
+  return hay.includes('digest');
+});
+if (!candidates.length) throw new Error('No digest found');
 
-      const digestObj = objects.find(o =>
-        `${o.name || ''} ${o.properties?.title || ''}`.toLowerCase().includes('digest')
-      );
-      if (!digestObj) throw new Error('No digest found');
+candidates.sort((a, b) =>
+  new Date(b.updated_at || b.created_at || 0) -
+  new Date(a.updated_at || a.created_at || 0)
+);
+const digestObj = candidates[0];
+console.log('[Pulse] Using digest:', digestObj?.name, digestObj?.id, digestObj?.updated_at || digestObj?.created_at);
+
 
       // ✅ critical: fetch full object (includes content.source)
       const object = await vertesiaAPI.getObject(digestObj.id);
