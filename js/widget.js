@@ -1,4 +1,4 @@
-// stable for the night widget.js — Portfolio Pulse (Stable Viewer + Scheduler Integration)
+// widget.js — Portfolio Pulse (Stable Viewer + Structured Digest Support)
 
 class PulseWidget {
   constructor() {
@@ -93,7 +93,6 @@ class PulseWidget {
       );
       if (!digestObj) throw new Error('No digest found');
 
-      // ✅ critical: fetch full object (includes content.source)
       const object = await vertesiaAPI.getObject(digestObj.id);
       const src = object?.content?.source;
       if (!src) throw new Error('No content source');
@@ -127,51 +126,43 @@ class PulseWidget {
     return res.text();
   }
 
-  /* ===== Parse ===== */
+  /* ===== Parse (New Structured Article Format) ===== */
   parseDigest(raw) {
     const text = raw.replace(/\r/g, '').replace(/\u00AD/g, '').trim();
-    const blocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
+    const articleBlocks = text.split(/(?=Article\s+\d+)/gi).map(b => b.trim()).filter(Boolean);
     const cards = [];
 
-    for (const block of blocks) {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length < 2) continue;
-      if (/^#?\s*Scout Pulse/i.test(lines[0])) continue;
-      lines.shift();
+    for (const block of articleBlocks) {
+      const titleMatch = block.match(/Article\s+\d+\s*[-–:]\s*(.+)/i);
+      const title = titleMatch ? titleMatch[1].trim() : 'Untitled Article';
 
-      let title = 'Untitled Article';
-      const titleMatch = lines.find(l => /^#+\s*/.test(l) || /\*\*(.+)\*\*/.test(l));
-      if (titleMatch) title = titleMatch.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+      // Extract "Contents" section
+      const contentsMatch = block.match(/Contents\s*\d*[\s\S]*?(?=(Citations|Article\s+\d+|$))/i);
+      const contents = contentsMatch
+        ? contentsMatch[0].replace(/Contents\s*\d*/i, '').trim()
+        : '';
 
-      let endIdx = lines.findIndex(l => /^(\*\*)?\s*(Citations|Sources|References)\s*:?\s*/i.test(l));
-      if (endIdx === -1) endIdx = lines.length;
-
-      const bullets = lines
-        .slice(0, endIdx)
-        .filter(l => /^[•\-*]\s/.test(l))
-        .map(l => l.replace(/^[•\-*]\s*/, '').trim());
-
-      const sources = [];
-      const citeBlock = block.match(/\*\*Citations:\*\*([\s\S]*)$/i);
-      if (citeBlock) {
-        citeBlock[1]
+      // Extract "Citations" section
+      const citations = [];
+      const citationsMatch = block.match(/Citations\s*\d*[\s\S]*?(?=(Article\s+\d+|$))/i);
+      if (citationsMatch) {
+        const lines = citationsMatch[0]
+          .replace(/Citations\s*\d*/i, '')
           .split('\n')
           .map(l => l.trim())
-          .filter(l => l.startsWith('-') || l.startsWith('•'))
-          .forEach(l => {
-            const url = (l.match(/https?:\/\/\S+/) || [])[0];
-            if (!url) return;
-            const t = l.replace(/[-•]\s*/, '').replace(url, '').trim();
-            sources.push({ title: t || 'Source', url });
-          });
+          .filter(Boolean);
+        for (const line of lines) {
+          const url = (line.match(/\((https?:\/\/[^\s)]+)\)/) || [])[1];
+          const text = line.replace(/\[|\]/g, '').replace(/\(https?:\/\/[^\s)]+\)/, '').trim();
+          if (url) citations.push({ title: text || 'Source', url });
+        }
       }
 
-      cards.push({ title, bullets, sources });
+      cards.push({ title, contents, citations });
     }
 
     const docTitle =
-      text.match(/^#?\s*Scout Pulse.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
-      text.match(/^#?\s*Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
+      text.match(/^#?\s*Scout Pulse Portfolio Digest.*$/m)?.[0]?.replace(/^#\s*/, '').trim() ||
       'Portfolio Digest';
 
     return { title: docTitle, cards };
@@ -193,23 +184,37 @@ class PulseWidget {
     if (footerDate)
       footerDate.textContent = `Last Update: ${createdAt.toLocaleString()}`;
 
-    newsList.innerHTML = this.digest.cards.map((a, i) => `
-      <div class="headline-item" data-i="${i}">
-        <div class="headline-header">
-          <div class="headline-text">${this.formatMarkdown(a.title)}</div>
-          <div class="headline-toggle">▼</div>
-        </div>
-        <div class="headline-details">
-          ${a.bullets.length ? `<ul class="headline-bullets">${a.bullets.map(b => `<li>${this.formatMarkdown(b)}</li>`).join('')}</ul>` : ''}
-          ${a.sources.length ? `
-            <div class="headline-sources">
-              <strong>Sources:</strong>
-              <ul class="source-list">
-                ${a.sources.map(s => `<li><a href="${s.url}" target="_blank">${this.formatMarkdown(s.title)}</a></li>`).join('')}
-              </ul>
-            </div>` : ''}
-        </div>
-      </div>`).join('');
+    newsList.innerHTML = this.digest.cards
+      .map(
+        a => `
+        <div class="headline-item">
+          <div class="headline-header">
+            <div class="headline-text"><strong>${this.formatMarkdown(a.title)}</strong></div>
+            <div class="headline-toggle">▼</div>
+          </div>
+          <div class="headline-details">
+            <div class="article-contents">${this.formatMarkdown(a.contents)}</div>
+            ${
+              a.citations.length
+                ? `<div class="headline-sources">
+                    <strong>Citations:</strong>
+                    <ul class="source-list">
+                      ${a.citations
+                        .map(
+                          s =>
+                            `<li><a href="${s.url}" target="_blank">${this.formatMarkdown(
+                              s.title
+                            )}</a></li>`
+                        )
+                        .join('')}
+                    </ul>
+                  </div>`
+                : ''
+            }
+          </div>
+        </div>`
+      )
+      .join('');
   }
 
   /* ===== Helpers ===== */
@@ -233,6 +238,7 @@ class PulseWidget {
   }
 }
 
+/* bootstrap */
 document.addEventListener('DOMContentLoaded', () => {
   window.pulseWidget = new PulseWidget();
 });
