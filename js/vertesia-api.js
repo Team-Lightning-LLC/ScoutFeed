@@ -25,7 +25,7 @@ class VertesiaAPI {
   }
 
   // ---------- Core Methods ----------
-  async executeAsync(interactionData = { Task: 'begin' }) {
+  async executeAsync(interactionData = { task: 'begin' }) {
     return await this.call('/execute/async', {
       method: 'POST',
       body: JSON.stringify({
