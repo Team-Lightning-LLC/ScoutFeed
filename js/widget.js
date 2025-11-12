@@ -59,7 +59,7 @@ class PulseWidget {
     this.updateStatus('Generating...', false);
 
     try {
-      await vertesiaAPI.executeAsync({ Task: 'begin' });
+      await vertesiaAPI.executeAsync({ task: 'begin' });
       // Wait 5 min for async completion
       await new Promise(r => setTimeout(r, 5 * 60 * 1000));
       await this.loadLatestDigest();
