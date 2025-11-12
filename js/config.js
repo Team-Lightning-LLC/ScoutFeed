@@ -6,5 +6,5 @@ const CONFIG = {
   MODEL: 'claude-sonnet-4-20250514',
   
   // Pulse Interaction
-  INTERACTION_NAME: 'Pulse v7'
+  INTERACTION_NAME: 'Pulse v8'
 };
