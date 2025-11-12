@@ -199,9 +199,13 @@ parseDigest(raw) {
     if (endIdx === -1) endIdx = lines.length;
 
     const bullets = lines
-      .slice(0, endIdx)
-      .filter(l => /^[•\-*]\s/.test(l))
-      .map(l => l.replace(/^[•\-*]\s*/, '').trim());
+  .slice(0, endIdx)
+  .filter(l =>
+    /^[•\-*]\s/.test(l) ||                     // existing bullet styles
+    /^\d+\.\s/.test(l) ||                     // numbered lists (1. 2. 3.)
+    /^[A-Z][^.?!]{20,}\.$/.test(l)            // long declarative sentences
+  )
+  .map(l => l.replace(/^[•\-*\d.]+\s*/, '').trim());
 
     // Extract citations
     const sources = [];
